@@ -42,10 +42,15 @@ import io.swagger.v3.oas.annotations.servers.Server;
 })
 public class OpenApiConfig {
 
-    /**
-     * Grupo de Integração: Visível para clientes de API (Sistemas Terceiros)
-     * Contém apenas endpoints operacionais.
-     */
+    @Bean
+    public GroupedOpenApi publicApi() {
+        return GroupedOpenApi.builder()
+                .group("public")
+                .displayName("1. Acesso Público & Login")
+                .pathsToMatch("/api/v1/auth/**", "/api/v1/public/**", "/api/v1/webhook/**", "/api/v1/health/**", "/swagger-ui/**")
+                .build();
+    }
+
     @Bean
     public GroupedOpenApi integrationApi() {
         return GroupedOpenApi.builder()
@@ -63,10 +68,6 @@ public class OpenApiConfig {
                 .build();
     }
 
-    /**
-     * Grupo Administrativo: Visível apenas para BSP_ADMIN e COMPANY_ADMIN
-     * Contém TODOS os endpoints da aplicação.
-     */
     @Bean
     public GroupedOpenApi adminApi() {
         return GroupedOpenApi.builder()
