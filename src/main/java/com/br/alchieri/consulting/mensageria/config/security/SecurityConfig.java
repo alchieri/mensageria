@@ -44,6 +44,7 @@ public class SecurityConfig {
         "/swagger-ui.html",
         "/swagger-ui/**",
         "/swagger-resources/**",
+        "/v3/api-docs/swagger-config",
         "/webjars/**",
         "/actuator/**",
         "/",
@@ -62,26 +63,27 @@ public class SecurityConfig {
 
                 // 1. Configuração base e grupo PÚBLICO devem ser acessíveis sem login
                 // Isso permite carregar a tela inicial e o grupo "1. Acesso Público" onde o botão de login estará.
-                .requestMatchers("/v3/api-docs/swagger-config", "/v3/api-docs/public").permitAll()
+                .requestMatchers("/v3/api-docs", "/v3/api-docs/public").permitAll()
 
                 // 2. Grupos restritos (Exigem Login/Token)
-                .requestMatchers("/v3/api-docs/admin").hasAnyRole("BSP_ADMIN")
-                .requestMatchers("/v3/api-docs/integracao").hasAnyRole("API_CLIENT", "COMPANY_ADMIN", "BSP_ADMIN", "COMPANY_USER")
-                .requestMatchers("/v3/api-docs/internal").hasAnyRole("BSP_ADMIN")
+                .requestMatchers("/v3/api-docs/admin").hasRole(Role.ROLE_BSP_ADMIN.name().replace("ROLE_", ""))
+                .requestMatchers("/v3/api-docs/integracao").hasAnyRole(Role.ROLE_COMPANY_ADMIN.name().replace("ROLE_", ""), 
+                                                                                    Role.ROLE_BSP_ADMIN.name().replace("ROLE_", ""), 
+                                                                                    Role.ROLE_API_CLIENT.name().replace("ROLE_", ""),
+                                                                                    Role.ROLE_USER.name().replace("ROLE_", ""))
 
                 // 3. Bloqueia listagem geral raiz (opcional, segurança extra)
-                .requestMatchers("/v3/api-docs").authenticated()
-                // ... (restante das configurações)
-                .requestMatchers("/api/v1/api-keys/**").hasAnyRole("ADMIN", "COMPANY_ADMIN", "BSP_ADMIN")
-
+                // .requestMatchers("/v3/api-docs").authenticated()
+                
                 .requestMatchers("/api/v1/auth/**").permitAll()
                 .requestMatchers("/api/v1/register/**").permitAll()
-                .requestMatchers(HttpMethod.GET, "/api/v1/webhook/whatsapp").permitAll() // Verificação do webhook
-                .requestMatchers(HttpMethod.POST, "/api/v1/webhook/whatsapp").permitAll() // Notificações do webhook (protegido por assinatura HMAC)
                 .requestMatchers("/api/v1/flow-data/**").permitAll()
                 .requestMatchers("/api/v1/internal-callbacks/**").permitAll() // Permite, mas a lógica do controller protege com a chave
+                .requestMatchers(HttpMethod.GET, "/api/v1/webhook/whatsapp").permitAll() // Verificação do webhook
+                .requestMatchers(HttpMethod.POST, "/api/v1/webhook/whatsapp").permitAll() // Notificações do webhook (protegido por assinatura HMAC)
                 
                 .requestMatchers("/api/v1/admin/**").hasRole(Role.ROLE_BSP_ADMIN.name().replace("ROLE_", ""))
+                .requestMatchers("/api/v1/api-keys/**").hasAnyRole(Role.ROLE_COMPANY_ADMIN.name().replace("ROLE_", ""), Role.ROLE_BSP_ADMIN.name().replace("ROLE_", ""))
                 .requestMatchers("/api/v1/company/**").hasAnyRole(Role.ROLE_COMPANY_ADMIN.name().replace("ROLE_", ""), Role.ROLE_BSP_ADMIN.name().replace("ROLE_", ""))
 
                 .requestMatchers("/api/v1/messages/**").authenticated()

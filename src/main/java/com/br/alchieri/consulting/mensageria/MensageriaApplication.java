@@ -15,15 +15,15 @@ import reactor.core.publisher.Hooks;
 @EnableCaching
 @EnableAsync // Mantenha se você usa @Async em algum lugar (ex: CallbackService)
 @EnableScheduling
-@OpenAPIDefinition( // Define informações globais da API
+@OpenAPIDefinition(
     info = @Info(
-        title = "Mensageria WhatsApp API",
+        title = "Alchieri Messaggistica API",
         version = "1.0.0",
         description = "API para envio de mensagens e gerenciamento de templates via WhatsApp Cloud e Business APIs.",
         contact = @Contact(
-            name = "Alchieri Consulting", // Seu nome ou da empresa
-            url = "https://www.alchiericonsulting.com", // Opcional
-            email = "alchiericonsulting@gmail.com"  // Opcional
+            name = "Alchieri Consulting",
+            url = "https://www.alchiericonsulting.com",
+            email = "alchiericonsulting@gmail.com"
         )
     )
 )

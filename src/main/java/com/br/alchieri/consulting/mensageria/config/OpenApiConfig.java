@@ -76,15 +76,6 @@ public class OpenApiConfig {
         return GroupedOpenApi.builder()
                 .group("admin")
                 .displayName("3. API Administrativa (Full)")
-                .pathsToMatch("/**")
-                .build();
-    }
-
-    @Bean
-    public GroupedOpenApi internalApi() {
-        return GroupedOpenApi.builder()
-                .group("internal")
-                .displayName("4. API Completa")
                 .pathsToMatch("/api/v1/**")
                 .build();
     }
