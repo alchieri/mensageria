@@ -11,6 +11,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -72,11 +73,22 @@ public class GlobalExceptionHandler {
                                 if (errorRootNode.has("error")) {
                                         JsonNode metaErrorNode = errorRootNode.get("error");
                                         metaError = objectMapper.treeToValue(metaErrorNode, MetaErrorPayload.class);
-                                        primaryMessage = metaError.getMessage() != null ? metaError.getMessage() : primaryMessage;
-                                        logger.warn("Erro detalhado da Meta API: Code={}, Subcode={}, Type={}, Message={}",
-                                                metaError.getCode(), metaError.getErrorSubcode(), metaError.getType(), metaError.getMessage());
+                                        
+                                        // LÓGICA MELHORADA: Extrair detalhes específicos se existirem
+                                        String specificDetails = metaErrorNode.path("error_data").path("details").asText(null);
+                                        
+                                        if (specificDetails != null && !specificDetails.isBlank()) {
+                                            // Usa o detalhe específico (Ex: "File too large...") como mensagem principal
+                                            primaryMessage = specificDetails;
+                                        } else if (metaError.getMessage() != null) {
+                                            // Fallback para a mensagem padrão da Meta
+                                            primaryMessage = metaError.getMessage();
+                                        }
+                                        
+                                        logger.warn("Erro detalhado da Meta API: Code={}, Subcode={}, Message={}, Details={}",
+                                                metaError.getCode(), metaError.getErrorSubcode(), metaError.getMessage(), specificDetails);
                                 } else {
-                                        primaryMessage = responseBody.length() < 250 ? responseBody : primaryMessage; // Usa corpo se for curto e não JSON de erro Meta
+                                        primaryMessage = responseBody.length() < 250 ? responseBody : primaryMessage;
                                 }
                         }
                 } catch (JsonProcessingException jpe) {
@@ -168,5 +180,28 @@ public class GlobalExceptionHandler {
                                 "Ocorreu um erro interno inesperado no servidor. Verifique os logs para detalhes.",
                                 request.getRequestURI());
                 return new ResponseEntity<>(errorResponse, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+
+        @ExceptionHandler(MaxUploadSizeExceededException.class)
+        public ResponseEntity<ErrorResponse> handleMaxUploadSizeExceededException(
+                MaxUploadSizeExceededException ex, HttpServletRequest request) {
+                
+                String message = "O arquivo enviado excede o tamanho máximo permitido pelo servidor.";
+                
+                // Tenta extrair o limite da mensagem de erro original para ser mais específico
+                // Ex: "The field file exceeds its maximum permitted size of 1048576 bytes."
+                if (ex.getMessage() != null && ex.getMessage().contains("maximum permitted size")) {
+                message += " Verifique a configuração de limite de upload.";
+                }
+
+                logger.warn("Tentativa de upload excedeu o limite em {}: {}", request.getRequestURI(), ex.getMessage());
+
+                ErrorResponse errorResponse = new ErrorResponse(
+                        HttpStatus.PAYLOAD_TOO_LARGE, // Retorna 413 Payload Too Large
+                        message,
+                        request.getRequestURI()
+                );
+                
+                return new ResponseEntity<>(errorResponse, HttpStatus.PAYLOAD_TOO_LARGE);
         }
 }

@@ -3,7 +3,6 @@ package com.br.alchieri.consulting.mensageria.chat.service;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.br.alchieri.consulting.mensageria.chat.dto.request.OutgoingMessageRequest;
-import com.br.alchieri.consulting.mensageria.chat.dto.request.SendFlowMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendInteractiveFlowMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendTemplateMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendTextMessageRequest;

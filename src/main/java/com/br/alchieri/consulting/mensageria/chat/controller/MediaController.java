@@ -65,11 +65,9 @@ public class MediaController {
                          content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = @Schema(implementation = ApiResponse.class)))
     })
     public ResponseEntity<ApiResponse> uploadMedia(
-            @Parameter(description = "Arquivo de mídia a ser carregado.", required = true,
-            schema = @Schema(type = "string", format = "binary")) // Define o tipo de conteúdo esperado para este parâmetro
+            @Parameter(description = "Arquivo de mídia a ser carregado.", required = true, schema = @Schema(type = "string", format = "binary"))
             @RequestParam("file") MultipartFile file,
-            @Parameter(description = "Produto de mensageria (geralmente 'whatsapp').", example = "whatsapp",
-            schema = @Schema(type = "string", defaultValue = "whatsapp"))
+            @Parameter(description = "Produto de mensageria (geralmente 'whatsapp').", example = "whatsapp", schema = @Schema(type = "string", defaultValue = "whatsapp"))
             @RequestParam(value = "messaging_product", defaultValue = "whatsapp") String product) {
 
         // 1. Obter o usuário autenticado
@@ -84,8 +82,7 @@ public class MediaController {
 
         try {
             // 2. Chamar o método de serviço, passando o usuário
-            String mediaId = whatsAppCloudApiService.uploadMedia(file, product, currentUser)
-                                 .block(BLOCK_TIMEOUT);
+            String mediaId = whatsAppCloudApiService.uploadMedia(file, product, currentUser).block(BLOCK_TIMEOUT);
 
             if (mediaId == null) {
                 throw new RuntimeException("ID da mídia não retornado pelo serviço de upload.");

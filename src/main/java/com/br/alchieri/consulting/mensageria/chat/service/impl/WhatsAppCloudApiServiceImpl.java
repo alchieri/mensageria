@@ -163,6 +163,8 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
             return Mono.error(new IllegalArgumentException("Arquivo não pode ser vazio para upload."));
         }
 
+        validateFileSize(file);
+
         // 1. Gerar uma chave de objeto única para o S3
         String objectKey = String.format("company-%d/user-%d/%s-%s",
                                          company.getId(),
@@ -267,9 +269,44 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
 
     // --- Métodos Helper Privados ---
 
+    private void validateFileSize(MultipartFile file) {
+        String contentType = file.getContentType();
+        long size = file.getSize();
+        
+        if (contentType == null) return; // Deixa passar se não tiver content type (arriscado, mas evita bloqueio indevido)
+
+        if (contentType.startsWith("image/")) {
+            // Limite de 5MB para Imagens
+            if (size > 5 * 1024 * 1024) {
+                throw new BusinessException("A imagem excede o limite máximo permitido de 5MB pela API do WhatsApp.");
+            }
+        } else if (contentType.startsWith("video/")) {
+            // Limite de 16MB para Vídeos
+            if (size > 16 * 1024 * 1024) {
+                throw new BusinessException("O vídeo excede o limite máximo permitido de 16MB pela API do WhatsApp.");
+            }
+        } else if (contentType.startsWith("audio/")) {
+            // Limite de 16MB para Áudios
+            if (size > 16 * 1024 * 1024) {
+                throw new BusinessException("O áudio excede o limite máximo permitido de 16MB pela API do WhatsApp.");
+            }
+        } else if (contentType.equals("image/webp")) {
+             // Limite de 100KB/500KB para Stickers (simplificado para 500KB para cobrir ambos)
+             if (size > 500 * 1024) {
+                throw new BusinessException("O sticker excede o limite máximo permitido de 500KB.");
+             }
+        } else {
+            // Limite de 100MB para Documentos (Limite geral da API)
+            if (size > 100 * 1024 * 1024) {
+                throw new BusinessException("O documento excede o limite máximo permitido de 100MB.");
+            }
+        }
+    }
+
     // Método helper privado para o upload para a Meta (código que já tínhamos)
     @SuppressWarnings("null")
     private Mono<String> uploadToMeta(MultipartFile file, String messagingProduct, User user) {
+        
         Company company = getCompanyFromUser(user);
         WebClient bspWebClient = getBspWebClient();
         String uploaderPhoneNumberId = getCompanyPhoneNumberId(company);
