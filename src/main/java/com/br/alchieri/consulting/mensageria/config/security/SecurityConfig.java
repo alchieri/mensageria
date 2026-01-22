@@ -66,7 +66,7 @@ public class SecurityConfig {
                 .requestMatchers("/v3/api-docs", "/v3/api-docs/public").permitAll()
 
                 // 2. Grupos restritos (Exigem Login/Token)
-                .requestMatchers("/v3/api-docs/admin").hasRole(Role.ROLE_BSP_ADMIN.name())
+                .requestMatchers("/v3/api-docs/admin").hasRole(Role.ROLE_BSP_ADMIN.name().replace("ROLE_", ""))
                 .requestMatchers("/v3/api-docs/integracao").hasAnyRole(Role.ROLE_COMPANY_ADMIN.name().replace("ROLE_", ""), 
                                                                                     Role.ROLE_BSP_ADMIN.name().replace("ROLE_", ""), 
                                                                                     Role.ROLE_API_CLIENT.name().replace("ROLE_", ""),
