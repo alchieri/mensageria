@@ -30,14 +30,14 @@ import io.swagger.v3.oas.annotations.servers.Server;
         type = SecuritySchemeType.HTTP,
         scheme = "bearer",
         bearerFormat = "JWT",
-        description = "Cole seu token JWT padrão aqui."
+        description = "Insira seu token JWT aqui."
     ),
     @SecurityScheme(
         name = "apiKeyAuth",
         type = SecuritySchemeType.APIKEY,
         in = SecuritySchemeIn.HEADER,
         paramName = "X-API-KEY",
-        description = "Para integrações M2M (Use o header X-API-KEY)."
+        description = "Para integrações via API Key."
     )
 })
 public class OpenApiConfig {
@@ -74,6 +74,15 @@ public class OpenApiConfig {
                 .group("admin")
                 .displayName("API Administrativa (Full)")
                 .pathsToMatch("/**")
+                .build();
+    }
+
+    @Bean
+    public GroupedOpenApi internalApi() {
+        return GroupedOpenApi.builder()
+                .group("internal")
+                .displayName("API Completa")
+                .pathsToMatch("/api/v1/**")
                 .build();
     }
 }
