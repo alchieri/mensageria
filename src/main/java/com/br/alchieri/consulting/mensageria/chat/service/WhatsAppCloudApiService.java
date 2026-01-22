@@ -4,6 +4,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.br.alchieri.consulting.mensageria.chat.dto.request.OutgoingMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendInteractiveFlowMessageRequest;
+import com.br.alchieri.consulting.mensageria.chat.dto.request.SendMultiProductMessageRequest;
+import com.br.alchieri.consulting.mensageria.chat.dto.request.SendProductMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendTemplateMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendTextMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.response.MessageStatusResponse;
@@ -23,6 +25,9 @@ public interface WhatsAppCloudApiService {
 
     Mono<MessageStatusResponse> getMessageStatusByWamid(String wamid);
     Mono<MessageStatusResponse> getMessageStatusByLogId(Long logId);
+
+    Mono<Void> sendProductMessage(SendProductMessageRequest request, User user);
+    Mono<Void> sendMultiProductMessage(SendMultiProductMessageRequest request, User user);
 
     // Adicionar métodos para enviar mídia avulsa (não template), etc., conforme necessário
     // Mono<Void> sendMediaMessage(SendMediaMessageRequest request);

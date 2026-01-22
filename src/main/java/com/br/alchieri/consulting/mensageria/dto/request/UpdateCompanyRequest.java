@@ -54,4 +54,7 @@ public class UpdateCompanyRequest {
 
     @Schema(description = "Define se a conta da empresa está ativa ou desativada.")
     private Boolean enabled;
+
+    @Schema(description = "Novo ID do Catálogo no Gerenciador de Comércio da Meta para esta empresa.")
+    private String metaCatalogId;
 }

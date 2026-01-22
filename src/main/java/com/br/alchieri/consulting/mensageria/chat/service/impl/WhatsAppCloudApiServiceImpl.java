@@ -34,6 +34,8 @@ import com.br.alchieri.consulting.mensageria.chat.dto.meta.WhatsAppCloudApiReque
 import com.br.alchieri.consulting.mensageria.chat.dto.meta.WhatsAppTemplatePayload;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.OutgoingMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendInteractiveFlowMessageRequest;
+import com.br.alchieri.consulting.mensageria.chat.dto.request.SendMultiProductMessageRequest;
+import com.br.alchieri.consulting.mensageria.chat.dto.request.SendProductMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendTemplateMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendTextMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.TemplateComponentRequest;
@@ -264,6 +266,37 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
         return buildInteractiveFlowMetaRequest(request)
                 .flatMap(metaRequest -> 
                     executeSendMessage(metaRequest, user, company, "INTERACTIVE_FLOW", request.getFlowName(), null)
+                );
+    }
+
+    @Override
+    public Mono<Void> sendProductMessage(SendProductMessageRequest request, User currentUser) {
+        
+        Company company = getCompanyFromUser(currentUser);
+
+        if (!billingService.canCompanySendMessages(company, 1)) {
+            return Mono.error(new BusinessException("Limite de envio de mensagens excedido."));
+        }
+
+        // Constrói o request de forma reativa (caso precise buscar algo no futuro)
+        return Mono.fromCallable(() -> buildSingleProductMetaRequest(request, company))
+                .flatMap(metaRequest -> 
+                    executeSendMessage(metaRequest, currentUser, company, "PRODUCT", "Produto: " + request.getProductRetailerId(), null)
+                );
+    }
+
+    @Override
+    public Mono<Void> sendMultiProductMessage(SendMultiProductMessageRequest request, User currentUser) {
+        
+        Company company = getCompanyFromUser(currentUser);
+
+        if (!billingService.canCompanySendMessages(company, 1)) {
+            return Mono.error(new BusinessException("Limite de envio de mensagens excedido."));
+        }
+
+        return Mono.fromCallable(() -> buildMultiProductMetaRequest(request, company))
+                .flatMap(metaRequest -> 
+                    executeSendMessage(metaRequest, currentUser, company, "PRODUCT_LIST", "Lista de Produtos: " + request.getHeaderText(), null)
                 );
     }
 
@@ -677,5 +710,87 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
         
         return raw.replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")
                   .replace("\t", "\\t").replace("\b", "\\b").replace("\f", "\\f");
+    }
+
+    private WhatsAppCloudApiRequest buildSingleProductMetaRequest(SendProductMessageRequest request, Company company) {
+        // Usa o catálogo da request ou o padrão da empresa
+        String catalogId = request.getCatalogId() != null ? request.getCatalogId() : company.getMetaCatalogId();
+        
+        if (catalogId == null || catalogId.isBlank()) {
+            throw new BusinessException("Catalog ID não configurado para a empresa. Configure no cadastro da empresa ou envie na requisição.");
+        }
+
+        // Action: Define qual produto mostrar
+        InteractivePayload.Action action = InteractivePayload.Action.builder()
+                .catalogId(catalogId)
+                .productRetailerId(request.getProductRetailerId())
+                .build();
+
+        // Body e Footer (Opcionais)
+        InteractivePayload.Body body = request.getBodyText() != null 
+                ? InteractivePayload.Body.builder().text(request.getBodyText()).build() 
+                : null;
+                
+        InteractivePayload.Footer footer = request.getFooterText() != null 
+                ? InteractivePayload.Footer.builder().text(request.getFooterText()).build() 
+                : null;
+
+        // Monta o payload interativo
+        InteractivePayload interactive = InteractivePayload.builder()
+                .type("product")
+                .body(body)
+                .footer(footer)
+                .action(action)
+                .build();
+
+        return WhatsAppCloudApiRequest.builder()
+                .to(request.getTo())
+                .type("interactive")
+                .interactive(interactive)
+                .build();
+    }
+
+    private WhatsAppCloudApiRequest buildMultiProductMetaRequest(SendMultiProductMessageRequest request, Company company) {
+        String catalogId = request.getCatalogId() != null ? request.getCatalogId() : company.getMetaCatalogId();
+
+        if (catalogId == null || catalogId.isBlank()) {
+            throw new BusinessException("Catalog ID não configurado para a empresa.");
+        }
+
+        // Converte as seções do seu DTO para as seções da Meta
+        List<InteractivePayload.Section> metaSections = request.getSections().stream()
+                .map(sectionReq -> InteractivePayload.Section.builder()
+                        .title(sectionReq.getTitle())
+                        .productItems(sectionReq.getProductRetailerIds().stream()
+                                .map(id -> InteractivePayload.ProductItem.builder().productRetailerId(id).build())
+                                .collect(Collectors.toList()))
+                        .build())
+                .collect(Collectors.toList());
+
+        // Action: Contém o catálogo e as seções
+        InteractivePayload.Action action = InteractivePayload.Action.builder()
+                .catalogId(catalogId)
+                .sections(metaSections)
+                .build();
+
+        // Monta o payload interativo (product_list exige Header)
+        InteractivePayload interactive = InteractivePayload.builder()
+                .type("product_list")
+                .header(InteractivePayload.Header.builder()
+                        .type("text")
+                        .text(request.getHeaderText())
+                        .build())
+                .body(InteractivePayload.Body.builder().text(request.getBodyText()).build())
+                .footer(request.getFooterText() != null 
+                        ? InteractivePayload.Footer.builder().text(request.getFooterText()).build() 
+                        : null)
+                .action(action)
+                .build();
+
+        return WhatsAppCloudApiRequest.builder()
+                .to(request.getTo())
+                .type("interactive")
+                .interactive(interactive)
+                .build();
     }
 }

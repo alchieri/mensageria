@@ -3,12 +3,13 @@ package com.br.alchieri.consulting.mensageria.chat.dto.meta;
 import java.util.List;
 import java.util.Map;
 
-import com.br.alchieri.consulting.mensageria.chat.dto.meta.WhatsAppTemplatePayload.MediaObject;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 import lombok.Singular;
 
 /**
@@ -112,6 +113,9 @@ public class InteractivePayload {
         @JsonProperty("parameters") // Para Flow
         private Map<String, Object> flowParameters; // Estrutura depende do Flow
 
+        @JsonProperty("product_retailer_id")
+        private String productRetailerId;
+
         // Outros campos para product/product_list (catalog_id) podem ser necessários
     }
 
@@ -182,9 +186,11 @@ public class InteractivePayload {
      */
     @Data
     @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public static class ProductItem {
         @JsonProperty("product_retailer_id")
-        private String productRetailerId; // ID do produto no catálogo
+        private String productRetailerId;
     }
 }

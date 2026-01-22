@@ -34,6 +34,8 @@ public class CompanyDetailsResponse {
     private String facebookBusinessManagerId;
     private String metaFlowPublicKeyId;
 
+    private String metaCatalogId;
+
     // Callbacks
     private String generalCallbackUrl;
     private String templateStatusCallbackUrl;
@@ -65,6 +67,7 @@ public class CompanyDetailsResponse {
                 .metaPrimaryPhoneNumberId(company.getMetaPrimaryPhoneNumberId())
                 .metaFlowPublicKeyId(company.getMetaFlowPublicKeyId())
                 .facebookBusinessManagerId(company.getFacebookBusinessManagerId())
+                .metaCatalogId(company.getMetaCatalogId())
                 .generalCallbackUrl(company.getGeneralCallbackUrl())
                 .templateStatusCallbackUrl(company.getTemplateStatusCallbackUrl())
                 .onboardingStatus(company.getOnboardingStatus())

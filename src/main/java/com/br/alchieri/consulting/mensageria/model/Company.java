@@ -112,6 +112,12 @@ public class Company {
     @Column(unique = true, nullable = true)
     private String metaFlowPublicKeyId;
 
+    @Column(name = "meta_catalog_id")
+    private String metaCatalogId; // ID do Catálogo no Gerenciador de Comércio
+
+    @Column(name = "meta_business_id")
+    private String metaBusinessId; // ID do Business Manager dono do catálogo
+
     @Column(nullable = false, updatable = false)
     @CreationTimestamp
     private LocalDateTime createdAt;

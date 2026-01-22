@@ -20,6 +20,8 @@ import org.springframework.web.bind.annotation.RestController;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.BulkMessageTemplateRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.OutgoingMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendInteractiveFlowMessageRequest;
+import com.br.alchieri.consulting.mensageria.chat.dto.request.SendMultiProductMessageRequest;
+import com.br.alchieri.consulting.mensageria.chat.dto.request.SendProductMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendTemplateMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendTextMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.response.BulkMessageResponse;
@@ -333,6 +335,33 @@ public class MessageController {
         HttpStatus status = "QUEUED".equals(response.getStatus()) ? HttpStatus.ACCEPTED : HttpStatus.BAD_REQUEST;
 
         return ResponseEntity.status(status).body(response);
+    }
+
+    @PostMapping("/interactive/product")
+    @Operation(summary = "Enviar Mensagem de Produto Único", description = "Envia um único produto do catálogo.")
+    public ResponseEntity<ApiResponse> sendProduct(
+            @Valid @RequestBody SendProductMessageRequest request) {
+        
+        User currentUser = securityUtils.getAuthenticatedUser();
+        // Normaliza telefone (reaproveitando sua lógica)
+        request.setTo(normalizePhoneNumber(request.getTo()));
+        
+        whatsAppCloudApiService.sendProductMessage(request, currentUser).block();
+        
+        return ResponseEntity.ok(new ApiResponse(true, "Mensagem de produto enviada/enfileirada com sucesso.", null));
+    }
+
+    @PostMapping("/interactive/product-list")
+    @Operation(summary = "Enviar Lista de Produtos", description = "Envia uma lista de até 30 produtos organizados em seções.")
+    public ResponseEntity<ApiResponse> sendMultiProduct(
+            @Valid @RequestBody SendMultiProductMessageRequest request) {
+        
+        User currentUser = securityUtils.getAuthenticatedUser();
+        request.setTo(normalizePhoneNumber(request.getTo()));
+        
+        whatsAppCloudApiService.sendMultiProductMessage(request, currentUser).block();
+        
+        return ResponseEntity.ok(new ApiResponse(true, "Mensagem multiproduto enviada/enfileirada com sucesso.", null));
     }
 
     private String normalizePhoneNumber(String phoneNumber) {
