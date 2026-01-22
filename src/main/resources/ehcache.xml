@@ -1,0 +1,15 @@
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xmlns="http://www.ehcache.org/v3"
+        xsi:schemaLocation="http://www.ehcache.org/v3 http://www.ehcache.org/schema/ehcache-core-3.0.xsd">
+
+    <cache alias="jcacheBucket4j"> <!-- Nome do cache que o Bucket4j usará -->
+        <key-type>java.lang.String</key-type>
+        <value-type>byte[]</value-type> <!-- Bucket4j armazena o estado como byte[] -->
+        <expiry>
+            <none/> <!-- Deixe o Bucket4j gerenciar a expiração dos tokens -->
+        </expiry>
+        <resources>
+            <heap unit="entries">2000</heap> <!-- Capacidade do cache -->
+        </resources>
+    </cache>
+</config>
