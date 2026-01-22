@@ -16,7 +16,10 @@ import io.swagger.v3.oas.annotations.servers.Server;
 @Configuration
 @OpenAPIDefinition(
     info = @Info(title = "Alchieri Messaggistica", version = "v1"),
-    servers = @Server(url = "/", description = "Default Server URL"),
+    servers = {
+        @Server(url = "https://mensageriaapi.alchiericonsulting.com", description = "Servidor de Produção"),
+        @Server(url = "http://localhost:8082", description = "Servidor Local")
+    },
     security = {
         @SecurityRequirement(name = "bearerAuth"),
         @SecurityRequirement(name = "apiKeyAuth")
