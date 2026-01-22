@@ -40,41 +40,40 @@ public class SecurityConfig {
     private final UserDetailsService userDetailsService;
     private final MdcFilter mdcFilter;
 
+    private static final String[] PUBLIC_WHITELIST = {
+        "/swagger-ui.html",
+        "/swagger-ui/**",
+        "/swagger-resources/**",
+        "/webjars/**",
+        "/actuator/**",
+        "/",
+        "/error"
+    };
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .csrf(AbstractHttpConfigurer::disable)
             .authorizeHttpRequests(auth -> auth
-                // 1. Endpoints públicos essenciais
-                .requestMatchers(
-                    "/api/v1/auth/**",
-                    "/api/v1/webhook/**",
-                    "/api/v1/public/**",
-                    "/api/v1/internal-callbacks/**",
-                    "/actuator/**",
-                    "webjars/**",
-                    "/",
-                    "/error"
-                ).permitAll()
-                // 2. Configuração do Swagger UI (Interface gráfica) Permitimos que todos autenticados vejam a "casca" do Swagger UI
-                .requestMatchers(
-                    "/swagger-ui/**",
-                    "/swagger-ui.html",
-                    "/v3/api-docs/swagger-config",
-                    "/swagger-resources/**"
-                ).permitAll()
-                // 3. SEGURANÇA DOS GRUPOS DE DOCUMENTAÇÃO (O "Pulo do Gato")
-                // O grupo "admin" (/v3/api-docs/admin) só pode ser lido por Admins
+
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                .requestMatchers(PUBLIC_WHITELIST).permitAll()
+
+                // 1. Configuração base e grupo PÚBLICO devem ser acessíveis sem login
+                // Isso permite carregar a tela inicial e o grupo "1. Acesso Público" onde o botão de login estará.
+                .requestMatchers("/v3/api-docs/swagger-config", "/v3/api-docs/public").permitAll()
+
+                // 2. Grupos restritos (Exigem Login/Token)
                 .requestMatchers("/v3/api-docs/admin").hasAnyRole("BSP_ADMIN", "ADMIN")
-                // O grupo "integracao" (/v3/api-docs/integracao) é acessível para API Clients e Admins
-                .requestMatchers("/v3/api-docs/integracao").hasAnyRole("API_CLIENT", "COMPANY_ADMIN", "BSP_ADMIN", "ADMIN")
-                // 4. Bloqueia o endpoint padrão "all" se ele existir
+                .requestMatchers("/v3/api-docs/integracao").hasAnyRole("API_CLIENT", "COMPANY_ADMIN", "BSP_ADMIN", "ADMIN", "COMPANY_USER")
+                .requestMatchers("/v3/api-docs/internal").hasAnyRole("BSP_ADMIN", "ADMIN")
+
+                // 3. Bloqueia listagem geral raiz (opcional, segurança extra)
                 .requestMatchers("/v3/api-docs").authenticated()
                 // ... (restante das configurações)
                 .requestMatchers("/api/v1/api-keys/**").hasAnyRole("ADMIN", "COMPANY_ADMIN", "BSP_ADMIN")
 
-                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll() 
                 .requestMatchers("/api/v1/auth/**").permitAll()
                 .requestMatchers("/api/v1/register/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/v1/webhook/whatsapp").permitAll() // Verificação do webhook
