@@ -65,9 +65,9 @@ public class SecurityConfig {
                 .requestMatchers("/v3/api-docs/swagger-config", "/v3/api-docs/public").permitAll()
 
                 // 2. Grupos restritos (Exigem Login/Token)
-                .requestMatchers("/v3/api-docs/admin").hasAnyRole("BSP_ADMIN", "ADMIN")
-                .requestMatchers("/v3/api-docs/integracao").hasAnyRole("API_CLIENT", "COMPANY_ADMIN", "BSP_ADMIN", "ADMIN", "COMPANY_USER")
-                .requestMatchers("/v3/api-docs/internal").hasAnyRole("BSP_ADMIN", "ADMIN")
+                .requestMatchers("/v3/api-docs/admin").hasAnyRole("BSP_ADMIN")
+                .requestMatchers("/v3/api-docs/integracao").hasAnyRole("API_CLIENT", "COMPANY_ADMIN", "BSP_ADMIN", "COMPANY_USER")
+                .requestMatchers("/v3/api-docs/internal").hasAnyRole("BSP_ADMIN")
 
                 // 3. Bloqueia listagem geral raiz (opcional, segurança extra)
                 .requestMatchers("/v3/api-docs").authenticated()
@@ -124,7 +124,7 @@ public class SecurityConfig {
         configuration.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/api/**", configuration);
+        source.registerCorsConfiguration("/**", configuration);
         return source;
     }
 
