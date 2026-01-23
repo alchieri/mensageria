@@ -18,13 +18,20 @@ public class UserSession implements Serializable {
     private String phoneNumber;
     private Long companyId;
     
+    // --- CONTROLE DE BOT ---
     private boolean botActive;      // Se está preso num fluxo de bot
     private Long currentBotId;      // Qual bot está rodando
     private Long currentStepId;     // Em qual nó da árvore ele está
 
-    private String currentState;    // Mantemos para compatibilidade ou uso híbrido
+    private String currentState;    // IDLE, IN_SERVICE_HUMAN, WAITING_...
+
+    // --- NOVO: CONTROLE DE ATENDIMENTO HUMANO ---
+    private Long assignedUserId;        // ID do Atendente (User.id) que "pegou" o chamado
+    private String assignedUserName;    // Nome do atendente (para exibir rápido no front)
+    private String assignedUserEmail;   // Email do atendente
+    private String assignmentTime;      // Quando o atendimento começou (ISO String)
     
-    // Dados temporários do contexto (Ex: nome digitado, opção escolhida)
+    // --- CONTEXTO ---
     @Builder.Default
     private Map<String, String> contextData = new HashMap<>();
 
