@@ -257,7 +257,7 @@ public class BotEngineServiceImpl implements BotEngineService {
     private boolean shouldTrigger(Bot bot) {
         if (bot.getTriggerType() == BotTriggerType.ALWAYS) return true;
         
-        if (bot.getTriggerType() == BotTriggerType.OUT_OF_OFFICE_HOURS) {
+        if (bot.getTriggerType() == BotTriggerType.RANGE_HOURS) {
             LocalTime now = LocalTime.now(); 
             return now.isBefore(bot.getStartTime()) || now.isAfter(bot.getEndTime());
         }
