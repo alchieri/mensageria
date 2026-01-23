@@ -12,6 +12,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import com.br.alchieri.consulting.mensageria.chat.dto.response.MetricCountDTO;
 import com.br.alchieri.consulting.mensageria.chat.model.WhatsAppMessageLog;
 import com.br.alchieri.consulting.mensageria.model.Company;
 
@@ -89,4 +90,28 @@ public interface WhatsAppMessageLogRepository extends JpaRepository<WhatsAppMess
                    "ORDER BY wml.created_at DESC",
                    nativeQuery = true)
     List<WhatsAppMessageLog> findLastMessageOfEachChatForCompany(@Param("companyId") Long companyId);
+
+    // 1. Conta mensagens enviadas por usuário
+    @Query("SELECT new com.br.alchieri.consulting.mensageria.chat.dto.response.MetricCountDTO(l.user.id, COUNT(l)) " +
+           "FROM WhatsAppMessageLog l " +
+           "WHERE l.company = :company " +
+           "AND l.createdAt BETWEEN :start AND :end " +
+           "AND l.direction = 'OUTGOING' " +
+           "AND l.user IS NOT NULL " +
+           "GROUP BY l.user.id")
+    List<MetricCountDTO> countMessagesByUser(@Param("company") Company company, 
+                                             @Param("start") LocalDateTime start, 
+                                             @Param("end") LocalDateTime end);
+
+    // 2. Conta contatos únicos atendidos (respondiste pelo menos 1 msg para este número)
+    @Query("SELECT new com.br.alchieri.consulting.mensageria.chat.dto.response.MetricCountDTO(l.user.id, COUNT(DISTINCT l.recipient)) " +
+           "FROM WhatsAppMessageLog l " +
+           "WHERE l.company = :company " +
+           "AND l.createdAt BETWEEN :start AND :end " +
+           "AND l.direction = 'OUTGOING' " +
+           "AND l.user IS NOT NULL " +
+           "GROUP BY l.user.id")
+    List<MetricCountDTO> countDistinctContactsByUser(@Param("company") Company company, 
+                                                     @Param("start") LocalDateTime start, 
+                                                     @Param("end") LocalDateTime end);
 }
