@@ -8,7 +8,6 @@ import java.util.Optional;
 
 import org.springframework.stereotype.Service;
 
-import com.br.alchieri.consulting.mensageria.chat.dto.request.SendFlowMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendInteractiveFlowMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendMediaMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendTemplateMessageRequest;
@@ -51,18 +50,13 @@ public class BotEngineServiceImpl implements BotEngineService {
 
     @Override
     public boolean tryTriggerBot(Company company, Contact contact, UserSession session, User systemUser) {
-        // Busca bots ativos da empresa
         List<Bot> bots = botRepository.findByCompanyAndIsActiveTrue(company);
 
         for (Bot bot : bots) {
             if (shouldTrigger(bot)) {
                 log.info("Iniciando Bot '{}' para {}", bot.getName(), contact.getPhoneNumber());
-                
-                // Inicia Sessão
                 session.setBotActive(true);
                 session.setCurrentBotId(bot.getId());
-                
-                // Executa o Passo Raiz
                 executeStep(bot.getRootStep(), contact, session, systemUser);
                 return true;
             }
@@ -76,11 +70,10 @@ public class BotEngineServiceImpl implements BotEngineService {
         BotStep currentStep = botStepRepository.findById(stepId).orElse(null);
 
         if (currentStep == null) {
-            sessionService.resetSession(session); // Estado inválido
+            sessionService.resetSession(session);
             return;
         }
 
-        // Procura nas opções qual bate com o input (match por keyword)
         Optional<BotOption> match = currentStep.getOptions().stream()
                 .filter(opt -> checkMatch(input, opt.getKeyword()))
                 .findFirst();
@@ -89,91 +82,51 @@ public class BotEngineServiceImpl implements BotEngineService {
             BotOption selectedOption = match.get();
             
             if (selectedOption.isHandoff()) {
-                // Transbordo para Humano
                 whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Transferindo para um atendente..."), systemUser).subscribe();
-                sessionService.resetSession(session);
-                // Aqui você setaria o status do chat para OPEN/PENDING no banco SQL
+                executeHandoffStep(currentStep, contact, session, systemUser); 
             } else if (selectedOption.getTargetStep() != null) {
-                // Avança para o próximo passo
                 executeStep(selectedOption.getTargetStep(), contact, session, systemUser);
             } else {
-                // Opção fim de linha
                 sessionService.resetSession(session);
             }
         } else {
-            // Input inválido (não bateu com nenhuma opção)
             whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Opção inválida. Tente novamente."), systemUser).subscribe();
-            // Reenvia o passo atual (opcional)
         }
     }
 
-    // --- LÓGICA DE EXECUÇÃO DE PASSO ---
-
     private void executeStep(BotStep step, Contact contact, UserSession session, User systemUser) {
-        
         log.info("Executando passo bot: ID={}, Tipo={}, Contato={}", step.getId(), step.getStepType(), contact.getPhoneNumber());
 
-        // 1. Atualiza Sessão (Persiste onde o usuário está)
         session.setCurrentStepId(step.getId());
         sessionService.saveSession(session);
 
         try {
             switch (step.getStepType()) {
-                case TEXT:
-                    executeTextStep(step, contact, systemUser);
-                    break;
-
-                case FLOW:
-                    executeFlowStep(step, contact, systemUser);
-                    break;
-
-                case TEMPLATE:
-                    executeTemplateStep(step, contact, systemUser);
-                    break;
-                
-                case MEDIA: 
-                   executeMediaStep(step, contact, systemUser);
-                   break;
-
-                case HANDOFF:
-                    executeHandoffStep(step, contact, session, systemUser);
-                    break;
-
-                case END:
-                    executeEndStep(step, contact, session, systemUser);
-                    break;
-
-                default:
+                case TEXT -> executeTextStep(step, contact, systemUser);
+                case FLOW -> executeFlowStep(step, contact, systemUser);
+                case TEMPLATE -> executeTemplateStep(step, contact, systemUser);
+                case MEDIA -> executeMediaStep(step, contact, systemUser);
+                case HANDOFF -> executeHandoffStep(step, contact, session, systemUser);
+                case END -> executeEndStep(step, contact, session, systemUser);
+                default -> {
                     log.warn("Tipo de passo desconhecido: {}", step.getStepType());
                     whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Erro: Tipo de passo não suportado."), systemUser).subscribe();
-                    break;
+                }
             }
         } catch (Exception e) {
             log.error("Erro crítico ao executar passo do bot ID {}: {}", step.getId(), e.getMessage(), e);
-            // Fallback de erro
             whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Desculpe, ocorreu um erro técnico no bot."), systemUser).subscribe();
         }
     }
 
-    // --- IMPLEMENTAÇÃO DOS TIPOS ESPECÍFICOS ---
-
-    /**
-     * TEXTO + MENU:
-     * Envia o texto. Se houver opções, formata como lista numerada.
-     * (Futuramente pode evoluir para Interactive Buttons se options.size() <= 3)
-     */
     private void executeTextStep(BotStep step, Contact contact, User systemUser) {
         StringBuilder body = new StringBuilder(step.getContent());
 
-        // Se houver opções, montamos um menu textual
         if (step.getOptions() != null && !step.getOptions().isEmpty()) {
             body.append("\n\n");
-            // Ordena pela sequência
             step.getOptions().sort((a, b) -> Integer.compare(a.getSequence(), b.getSequence()));
 
             for (BotOption opt : step.getOptions()) {
-                // Ex: "1 - Financeiro"
-                // Se a keyword for igual ao label ou vazia, usa sequência.
                 String displayKey = opt.getKeyword();
                 body.append("👉 *").append(displayKey).append("* - ").append(opt.getLabel()).append("\n");
             }
@@ -182,12 +135,7 @@ public class BotEngineServiceImpl implements BotEngineService {
         whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), body.toString()), systemUser).subscribe();
     }
 
-    /**
-     * FLOW:
-     * Envia uma mensagem interativa com botão para abrir o Flow.
-     * Metadata esperado: { "flow_token": "...", "cta_label": "Abrir", "screen_id": "screen_01", "data": {...} }
-     * Content esperado: Flow ID (da Meta)
-     */
+    // --- CORREÇÃO 1: FLOW STEP ---
     private void executeFlowStep(BotStep step, Contact contact, User systemUser) throws JsonProcessingException {
         
         String flowIdentifier = step.getContent(); // ID ou Nome do Flow
@@ -196,9 +144,6 @@ public class BotEngineServiceImpl implements BotEngineService {
         SendInteractiveFlowMessageRequest request = new SendInteractiveFlowMessageRequest();
         request.setTo(contact.getPhoneNumber());
         request.setFlowName(flowIdentifier);
-        
-        // Define um token de rastreamento único para este passo do bot
-        // Isso ajuda no webhook a saber que a resposta veio deste passo específico
         request.setFlowToken("BOT_STEP_" + step.getId());
         
         // Configuração padrão
@@ -207,9 +152,8 @@ public class BotEngineServiceImpl implements BotEngineService {
         request.setBodyText("Por favor, continue o atendimento no formulário abaixo.");
         request.setFlowCta("Abrir");
 
-        // Sobrescreve com Metadata se existir
-        Map<String, Object> flowActionPayload = new HashMap<>();
-        flowActionPayload.put("screen", "SUCCESS"); // Tela padrão fallback
+        SendInteractiveFlowMessageRequest.FlowActionPayload flowActionPayload = new SendInteractiveFlowMessageRequest.FlowActionPayload();
+        flowActionPayload.setScreen("SUCCESS"); // Tela padrão (fallback)
 
         if (metadataJson != null && !metadataJson.isBlank()) {
             JsonNode metaNode = objectMapper.readTree(metadataJson);
@@ -220,28 +164,21 @@ public class BotEngineServiceImpl implements BotEngineService {
             if (metaNode.has("cta_label")) request.setFlowCta(metaNode.path("cta_label").asText());
             if (metaNode.has("mode")) request.setMode(metaNode.path("mode").asText());
 
-            // Payload da Ação (Screen + Data)
             if (metaNode.has("screen_id")) {
-                flowActionPayload.put("screen", metaNode.path("screen_id").asText());
+                flowActionPayload.setScreen(metaNode.path("screen_id").asText());
             }
             if (metaNode.has("data")) {
-                // Converte o nó "data" em Map<String, Object>
-                Map<String, Object> dataMap = objectMapper.convertValue(metaNode.path("data"), Map.class);
-                flowActionPayload.put("data", dataMap);
+                Map<String, Object> dataMap = objectMapper.convertValue(metaNode.path("data"), new TypeReference<Map<String, Object>>() {});
+                flowActionPayload.setData(dataMap);
             }
         }
+        
         request.setFlowActionPayload(flowActionPayload);
 
-        // Chama o serviço
         whatsAppService.sendInteractiveFlowMessage(request, systemUser).subscribe();
     }
 
-    /**
-     * TEMPLATE:
-     * Envia um Template HSM (aprovado pela Meta).
-     * Content esperado: Nome do Template
-     * Metadata esperado: { "language": "pt_BR", "components": [ ... ] }
-     */
+    // --- CORREÇÃO 2: TEMPLATE STEP ---
     private void executeTemplateStep(BotStep step, Contact contact, User systemUser) throws JsonProcessingException {
         
         String templateName = step.getContent();
@@ -250,7 +187,7 @@ public class BotEngineServiceImpl implements BotEngineService {
         SendTemplateMessageRequest request = new SendTemplateMessageRequest();
         request.setTo(contact.getPhoneNumber());
         request.setTemplateName(templateName);
-        request.setLanguageCode("pt_BR"); // Default
+        request.setLanguageCode("pt_BR"); 
 
         if (metadataJson != null && !metadataJson.isBlank()) {
             JsonNode metaNode = objectMapper.readTree(metadataJson);
@@ -260,24 +197,19 @@ public class BotEngineServiceImpl implements BotEngineService {
             }
 
             if (metaNode.has("components")) {
-                // Mágica do Jackson: Converte o array JSON "components" diretamente 
-                // para a Lista de TemplateComponentRequest
+                // CORREÇÃO: Usar TypeReference para garantir a tipagem correta da Lista
                 List<TemplateComponentRequest> components = objectMapper.convertValue(
                     metaNode.get("components"),
                     new TypeReference<List<TemplateComponentRequest>>() {}
                 );
-                request.setComponents(components);
+                // CORREÇÃO: Usar setResolvedComponents, pois são valores já definidos no JSON do bot, não mapeamentos dinâmicos
+                request.setResolvedComponents(components);
             }
         }
 
-        // Chama o serviço
         whatsAppService.sendTemplateMessage(request, systemUser, null).subscribe();
     }
 
-    /**
-     * HANDOFF (Transbordo):
-     * Envia mensagem de transferência e muda o estado da sessão.
-     */
     private void executeHandoffStep(BotStep step, Contact contact, UserSession session, User systemUser) {
         String message = step.getContent();
         if (message == null || message.isBlank()) {
@@ -286,24 +218,14 @@ public class BotEngineServiceImpl implements BotEngineService {
         
         whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), message), systemUser).subscribe();
         
-        // LÓGICA CRUCIAL:
-        // 1. Muda estado da sessão para IN_SERVICE_HUMAN
         sessionService.updateState(session, ConversationState.IN_SERVICE_HUMAN);
-        
-        // 2. Desativa flag de bot para parar o motor
         session.setBotActive(false);
         session.setCurrentBotId(null);
         session.setCurrentStepId(null);
         sessionService.saveSession(session);
-        
-        // 3. (Opcional) Dispara notificação/WebSocket para painel de atendimento aqui
         log.info("Transbordo realizado para contato {}", contact.getPhoneNumber());
     }
 
-    /**
-     * END (Fim):
-     * Envia tchau e reseta a sessão para IDLE.
-     */
     private void executeEndStep(BotStep step, Contact contact, UserSession session, User systemUser) {
         String message = step.getContent();
         if (message != null && !message.isBlank()) {
@@ -312,10 +234,9 @@ public class BotEngineServiceImpl implements BotEngineService {
         sessionService.resetSession(session);
     }
 
-    // --- SE TIVER MÍDIA (Imagem/PDF) ---
     private void executeMediaStep(BotStep step, Contact contact, User systemUser) throws JsonProcessingException {
-        String mediaId = step.getContent(); // ID da mídia no WhatsApp
-        String type = "image"; // Default
+        String mediaId = step.getContent();
+        String type = "image";
         String caption = null;
         
         if (step.getMetadata() != null) {
@@ -333,13 +254,11 @@ public class BotEngineServiceImpl implements BotEngineService {
         whatsAppService.sendMediaMessage(req, systemUser).subscribe();
     }
 
-    // --- AUXILIARES ---
-
     private boolean shouldTrigger(Bot bot) {
         if (bot.getTriggerType() == BotTriggerType.ALWAYS) return true;
         
         if (bot.getTriggerType() == BotTriggerType.OUT_OF_OFFICE_HOURS) {
-            LocalTime now = LocalTime.now(); // Cuidar com Timezone da empresa!
+            LocalTime now = LocalTime.now(); 
             return now.isBefore(bot.getStartTime()) || now.isAfter(bot.getEndTime());
         }
         return false;
@@ -347,7 +266,6 @@ public class BotEngineServiceImpl implements BotEngineService {
 
     private boolean checkMatch(String input, String keyword) {
         if (input == null || keyword == null) return false;
-        // Comparação simples (pode evoluir para Regex ou Contains)
         return input.trim().equalsIgnoreCase(keyword.trim());
     }
 

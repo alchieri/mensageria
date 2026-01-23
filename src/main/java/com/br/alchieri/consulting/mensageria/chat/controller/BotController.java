@@ -22,13 +22,15 @@ import com.br.alchieri.consulting.mensageria.model.User;
 import com.br.alchieri.consulting.mensageria.util.SecurityUtils;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
 @RestController
 @RequestMapping("/api/v1/bots")
-@Tag(name = "Bot Builder", description = "Gestão de Bots Dinâmicos")
+@Tag(name = "Bot Builder", description = "API para gestão e construção de fluxos de chat automatizados (Bots).")
 @RequiredArgsConstructor
 public class BotController {
 
@@ -38,7 +40,11 @@ public class BotController {
     // --- BOTS ---
 
     @GetMapping
-    @Operation(summary = "Listar Bots", description = "Lista todos os bots da empresa logada.")
+    @Operation(summary = "Listar Bots", description = "Retorna uma lista de todos os bots configurados para a empresa do usuário logado.")
+    @ApiResponses(value = {
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Lista recuperada com sucesso"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "Acesso negado", content = @Content)
+    })
     public ResponseEntity<ApiResponse> listBots() {
         User user = securityUtils.getAuthenticatedUser();
         List<BotResponseDTO> bots = botService.listBots(user.getCompany());
@@ -46,7 +52,11 @@ public class BotController {
     }
 
     @PostMapping
-    @Operation(summary = "Criar Bot", description = "Cria um novo bot com um passo inicial padrão.")
+    @Operation(summary = "Criar Novo Bot", description = "Cria um novo bot. Um passo inicial (ROOT) é criado automaticamente.")
+    @ApiResponses(value = {
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Bot criado com sucesso"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Dados inválidos", content = @Content)
+    })
     public ResponseEntity<ApiResponse> createBot(@Valid @RequestBody CreateBotRequest request) {
         User user = securityUtils.getAuthenticatedUser();
         BotResponseDTO bot = botService.createBot(user.getCompany(), request);
@@ -54,7 +64,11 @@ public class BotController {
     }
 
     @DeleteMapping("/{id}")
-    @Operation(summary = "Deletar Bot", description = "Remove o bot e todos os seus passos.")
+    @Operation(summary = "Excluir Bot", description = "Remove permanentemente um bot e todos os seus passos e opções associados.")
+    @ApiResponses(value = {
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Bot removido com sucesso"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Bot não encontrado", content = @Content)
+    })
     public ResponseEntity<ApiResponse> deleteBot(@PathVariable Long id) {
         User user = securityUtils.getAuthenticatedUser();
         botService.deleteBot(id, user.getCompany());
@@ -64,7 +78,7 @@ public class BotController {
     // --- STEPS (PASSOS) ---
 
     @GetMapping("/steps/{stepId}")
-    @Operation(summary = "Detalhes do Passo", description = "Retorna o conteúdo do passo e suas opções de saída.")
+    @Operation(summary = "Obter Detalhes do Passo", description = "Retorna o conteúdo completo de um passo específico, incluindo suas opções de resposta.")
     public ResponseEntity<ApiResponse> getStep(@PathVariable Long stepId) {
         // TODO: Adicionar validação de segurança se o step pertence à company do user
         BotStepDTO step = botService.getStepDetails(stepId);
@@ -72,7 +86,7 @@ public class BotController {
     }
 
     @PostMapping("/{botId}/steps")
-    @Operation(summary = "Adicionar Passo", description = "Cria um novo passo solto (sem conexão ainda) para o bot.")
+    @Operation(summary = "Adicionar Passo ao Bot", description = "Cria um novo passo isolado para o bot. Use o endpoint de 'linkSteps' para conectá-lo.")
     public ResponseEntity<ApiResponse> addStep(@PathVariable Long botId, @RequestBody BotStepDTO stepDto) {
         User user = securityUtils.getAuthenticatedUser();
         BotStepDTO created = botService.addStep(botId, stepDto, user.getCompany());
@@ -80,7 +94,7 @@ public class BotController {
     }
     
     @PutMapping("/steps/{stepId}")
-    @Operation(summary = "Atualizar Passo", description = "Atualiza texto, tipo ou metadados de um passo.")
+    @Operation(summary = "Atualizar Passo", description = "Atualiza o conteúdo, tipo ou metadados de um passo existente.")
     public ResponseEntity<ApiResponse> updateStep(@PathVariable Long stepId, @RequestBody BotStepDTO stepDto) {
         BotStepDTO updated = botService.updateStep(stepId, stepDto);
         return ResponseEntity.ok(new ApiResponse(true, "Passo atualizado", updated));
@@ -89,7 +103,11 @@ public class BotController {
     // --- OPTIONS (CONEXÕES) ---
 
     @PostMapping("/steps/{originStepId}/options")
-    @Operation(summary = "Conectar Passos", description = "Cria uma opção (botão/palavra-chave) ligando o passo A ao passo B.")
+    @Operation(summary = "Conectar Passos (Criar Opção)", description = "Cria uma ligação entre o passo de origem e o passo de destino através de uma opção (botão ou palavra-chave).")
+    @ApiResponses(value = {
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Conexão criada com sucesso"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Passo de origem ou destino não encontrado")
+    })
     public ResponseEntity<ApiResponse> linkSteps(
             @PathVariable Long originStepId,
             @RequestBody Map<String, Object> payload) {
