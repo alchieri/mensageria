@@ -7,10 +7,12 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.stereotype.Repository;
 
 import com.br.alchieri.consulting.mensageria.chat.model.Contact;
 import com.br.alchieri.consulting.mensageria.model.Company;
 
+@Repository
 public interface ContactRepository extends JpaRepository<Contact, Long> {
 
     // Busca contatos paginados por empresa

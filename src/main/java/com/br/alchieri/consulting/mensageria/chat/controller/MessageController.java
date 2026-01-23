@@ -33,6 +33,7 @@ import com.br.alchieri.consulting.mensageria.dto.response.ApiResponse;
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.User;
+import com.br.alchieri.consulting.mensageria.service.impl.SessionService;
 import com.br.alchieri.consulting.mensageria.util.SecurityUtils;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -60,6 +61,7 @@ public class MessageController {
 
     private final BulkMessageService bulkMessageService;
     private final WhatsAppCloudApiService whatsAppCloudApiService;
+    private final SessionService sessionService;
 
     private static final Duration BLOCK_TIMEOUT = Duration.ofSeconds(10);
 
@@ -87,8 +89,11 @@ public class MessageController {
             @Valid @RequestBody SendTextMessageRequest request) {
 
         User currentUser = securityUtils.getAuthenticatedUser();
-        request.setTo(normalizePhoneNumber(request.getTo()));
+        String normalizedTo = normalizePhoneNumber(request.getTo());
+        request.setTo(normalizedTo);
         logger.info("Usuário ID {}: Recebida requisição para ENFILEIRAR (SQS) mensagem de texto para: {}", currentUser.getId(), request.getTo());
+
+        sessionService.validateSessionAccess(currentUser, normalizedTo);
 
         OutgoingMessageRequest queuePayload = OutgoingMessageRequest.builder()
                 .messageType("TEXT")
@@ -135,7 +140,12 @@ public class MessageController {
             @Valid @RequestBody SendTemplateMessageRequest request
     ) {
         User currentUser = securityUtils.getAuthenticatedUser();
-        request.setTo(normalizePhoneNumber(request.getTo()));
+
+        if (request.getTo() != null) {
+            String normalizedTo = normalizePhoneNumber(request.getTo());
+            request.setTo(normalizedTo);
+            sessionService.validateSessionAccess(currentUser, normalizedTo);
+        }
         logger.info("Usuário ID {}: Recebida requisição para ENFILEIRAR (SQS) template '{}' para: {}",
                 currentUser.getId(), request.getTemplateName(), request.getTo());
 
@@ -178,7 +188,11 @@ public class MessageController {
             @Valid @RequestBody SendInteractiveFlowMessageRequest request
     ) {
         User currentUser = securityUtils.getAuthenticatedUser();
-        request.setTo(normalizePhoneNumber(request.getTo()));
+        String normalizedTo = normalizePhoneNumber(request.getTo());
+        request.setTo(normalizedTo);
+
+        sessionService.validateSessionAccess(currentUser, normalizedTo);
+
         logger.info("Usuário ID {}: Enfileirando Flow Interativo '{}' para {}",
                 currentUser.getId(), request.getFlowName(), request.getTo());
                 
@@ -215,10 +229,11 @@ public class MessageController {
         
         User currentUser = securityUtils.getAuthenticatedUser();
         
-        // Normaliza telefone
-        request.setTo(normalizePhoneNumber(request.getTo()));
+        String normalizedTo = normalizePhoneNumber(request.getTo());
+        request.setTo(normalizedTo);
+
+        sessionService.validateSessionAccess(currentUser, normalizedTo);
         
-        // Executa envio
         whatsAppCloudApiService.sendMediaMessage(request, currentUser).block();
 
         return ResponseEntity.ok(new ApiResponse(true, "Mensagem de mídia enviada/enfileirada.", null));
@@ -360,8 +375,10 @@ public class MessageController {
             @Valid @RequestBody SendProductMessageRequest request) {
         
         User currentUser = securityUtils.getAuthenticatedUser();
-        // Normaliza telefone (reaproveitando sua lógica)
-        request.setTo(normalizePhoneNumber(request.getTo()));
+        String normalizedTo = normalizePhoneNumber(request.getTo());
+        request.setTo(normalizedTo);
+
+        sessionService.validateSessionAccess(currentUser, normalizedTo);
         
         whatsAppCloudApiService.sendProductMessage(request, currentUser).block();
         
@@ -374,7 +391,10 @@ public class MessageController {
             @Valid @RequestBody SendMultiProductMessageRequest request) {
         
         User currentUser = securityUtils.getAuthenticatedUser();
-        request.setTo(normalizePhoneNumber(request.getTo()));
+        String normalizedTo = normalizePhoneNumber(request.getTo());
+        request.setTo(normalizedTo);
+
+        sessionService.validateSessionAccess(currentUser, normalizedTo);
         
         whatsAppCloudApiService.sendMultiProductMessage(request, currentUser).block();
         

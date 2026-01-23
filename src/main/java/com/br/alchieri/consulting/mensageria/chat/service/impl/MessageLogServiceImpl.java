@@ -13,13 +13,17 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.br.alchieri.consulting.mensageria.chat.dto.response.ActiveChatResponse;
 import com.br.alchieri.consulting.mensageria.chat.model.Contact;
+import com.br.alchieri.consulting.mensageria.chat.model.InternalMessageReadReceipt;
 import com.br.alchieri.consulting.mensageria.chat.model.WhatsAppMessageLog;
 import com.br.alchieri.consulting.mensageria.chat.model.enums.MessageDirection;
 import com.br.alchieri.consulting.mensageria.chat.repository.ContactRepository;
+import com.br.alchieri.consulting.mensageria.chat.repository.InternalMessageReadReceiptRepository;
 import com.br.alchieri.consulting.mensageria.chat.repository.WhatsAppMessageLogRepository;
 import com.br.alchieri.consulting.mensageria.chat.service.MessageLogService;
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
+import com.br.alchieri.consulting.mensageria.exception.ResourceNotFoundException;
 import com.br.alchieri.consulting.mensageria.model.Company;
+import com.br.alchieri.consulting.mensageria.model.User;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +35,7 @@ public class MessageLogServiceImpl implements MessageLogService {
 
     private final WhatsAppMessageLogRepository messageLogRepository;
     private final ContactRepository contactRepository;
+    private final InternalMessageReadReceiptRepository readReceiptRepository;
 
     @Override
     public Page<WhatsAppMessageLog> getMessageHistoryForContact(Contact contact, Company company, Pageable pageable) {
@@ -128,20 +133,28 @@ public class MessageLogServiceImpl implements MessageLogService {
 
     @Override
     @Transactional
-    public void markChatAsRead(String contactPhoneNumber, Company company) {
-        log.info("Marcando mensagens do contato {} como lidas para a empresa ID {}", contactPhoneNumber, company.getId());
+    public void logMessageReadByUser(Long contactId, User user) {
+        Contact contact = contactRepository.findById(contactId)
+                .orElseThrow(() -> new ResourceNotFoundException("Contato não encontrado."));
+
+        // Validação de Segurança: O contato pertence à mesma empresa do usuário?
+        if (!contact.getCompany().getId().equals(user.getCompany().getId())) {
+            throw new BusinessException("Acesso negado: Este contato pertence a outra empresa.");
+        }
+
+        // 1. Grava o recibo de leitura interno (Auditoria)
+        InternalMessageReadReceipt receipt = new InternalMessageReadReceipt();
+        receipt.setUser(user);
+        receipt.setContact(contact);
+        readReceiptRepository.save(receipt);
         
-        // Encontra o contato e zera seu contador
-        contactRepository.findByCompanyAndPhoneNumber(company, contactPhoneNumber)
-                .ifPresent(contact -> {
-                    if (contact.getUnreadMessagesCount() > 0) {
-                        contact.setUnreadMessagesCount(0);
-                        contactRepository.save(contact);
-                        log.info("Contador de não lidas para o contato ID {} resetado para 0.", contact.getId());
-                        // TODO: Opcional - Enviar evento WebSocket/SSE para o frontend para atualizar a UI em tempo real
-                    }
-                });
-        // Não precisa mais do método no repository para update em lote
+        log.info("Leitura registrada: Usuário {} visualizou chat com {}", user.getId(), contact.getPhoneNumber());
+
+        // 2. Zera o contador de mensagens não lidas (Lógica de Negócio)
+        if (contact.getUnreadMessagesCount() > 0) {
+            contact.setUnreadMessagesCount(0);
+            contactRepository.save(contact);
+        }
     }
 
     // Helper para truncar a mensagem

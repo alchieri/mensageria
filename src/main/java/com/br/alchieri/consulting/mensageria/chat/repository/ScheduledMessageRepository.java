@@ -8,10 +8,12 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
 
 import com.br.alchieri.consulting.mensageria.chat.model.ScheduledCampaign;
 import com.br.alchieri.consulting.mensageria.chat.model.ScheduledMessage;
 
+@Repository
 public interface ScheduledMessageRepository extends JpaRepository<ScheduledMessage, Long> {
 
     // Busca um lote de mensagens pendentes que já deveriam ter sido enviadas

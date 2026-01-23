@@ -6,20 +6,37 @@ import com.br.alchieri.consulting.mensageria.model.User;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.Table;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 @Entity
+@Table(name = "internal_message_read_receipts")
+@Data
+@NoArgsConstructor
 public class InternalMessageReadReceipt {
-    
-    @Id @GeneratedValue
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    
+
     @ManyToOne
-    private User agent; // Quem leu
-    
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user; // O atendente que visualizou
+
     @ManyToOne
-    private Contact contact; // Conversa de quem
-    
-    private LocalDateTime readAt; // Quando abriu a tela
+    @JoinColumn(name = "contact_id", nullable = false)
+    private Contact contact; // A conversa visualizada
+
+    private LocalDateTime readAt;
+
+    @PrePersist
+    public void prePersist() {
+        this.readAt = LocalDateTime.now();
+    }
 }

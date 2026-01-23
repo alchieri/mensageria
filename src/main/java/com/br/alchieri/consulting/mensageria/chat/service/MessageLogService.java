@@ -9,6 +9,7 @@ import com.br.alchieri.consulting.mensageria.chat.dto.response.ActiveChatRespons
 import com.br.alchieri.consulting.mensageria.chat.model.Contact;
 import com.br.alchieri.consulting.mensageria.chat.model.WhatsAppMessageLog;
 import com.br.alchieri.consulting.mensageria.model.Company;
+import com.br.alchieri.consulting.mensageria.model.User;
 
 public interface MessageLogService {
 
@@ -25,5 +26,6 @@ public interface MessageLogService {
 
     List<ActiveChatResponse> getChatList(Company company);
     Page<WhatsAppMessageLog> getMessageHistory(String contactPhoneNumber, Company company, Pageable pageable);
-    void markChatAsRead(String contactPhoneNumber, Company company);
+
+    void logMessageReadByUser(Long contactId, User user);
 }

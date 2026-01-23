@@ -105,15 +105,16 @@ public class ChatController {
         return ResponseEntity.ok(messageLogPage.map(MessageLogResponse::fromEntity));
     }
 
-    @PostMapping(value = "/{phoneNumber}/mark-as-read")
-    @Operation(summary = "Marcar Conversa como Lida",
-               description = "Zera o contador de mensagens não lidas para uma conversa específica.")
-    public ResponseEntity<Void> markChatAsRead(
-            @Parameter(description = "Número de telefone do contato cuja conversa será marcada como lida.", required = true)
-            @PathVariable String phoneNumber) {
+    @PostMapping(value = "/{contactId}/read")
+    @Operation(summary = "Registrar Leitura", 
+               description = "Registra que o usuário atual visualizou a conversa e zera o contador de não lidas.")
+    public ResponseEntity<Void> markAsRead(
+            @Parameter(description = "ID do contato.", required = true)
+            @PathVariable Long contactId) {
+        
         User currentUser = securityUtils.getAuthenticatedUser();
-        Company currentCompany = currentUser.getCompany();
-        messageLogService.markChatAsRead(phoneNumber, currentCompany); // <<< MUDOU AQUI
-        return ResponseEntity.noContent().build();
+        messageLogService.logMessageReadByUser(contactId, currentUser);
+        
+        return ResponseEntity.ok().build();
     }
 }

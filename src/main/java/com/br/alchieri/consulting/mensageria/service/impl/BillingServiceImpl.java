@@ -1,4 +1,4 @@
-package com.br.alchieri.consulting.mensageria.chat.model;
+package com.br.alchieri.consulting.mensageria.service.impl;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.br.alchieri.consulting.mensageria.chat.dto.response.CompanyUsageResponse;
+import com.br.alchieri.consulting.mensageria.chat.model.WhatsAppMessageLog;
 import com.br.alchieri.consulting.mensageria.chat.model.enums.FlowStatus;
 import com.br.alchieri.consulting.mensageria.chat.model.enums.TemplateCategory;
 import com.br.alchieri.consulting.mensageria.chat.repository.ClientTemplateRepository;

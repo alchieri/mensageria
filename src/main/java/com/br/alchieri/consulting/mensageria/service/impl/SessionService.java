@@ -54,6 +54,26 @@ public class SessionService {
     }
 
     /**
+     * Valida se o usuário atual tem permissão para interagir nesta sessão.
+     * Lança BusinessException se a sessão pertencer a outro atendente.
+     */
+    public void validateSessionAccess(User user, String phoneNumber) {
+        // Normaliza o telefone para garantir match com a chave do Redis
+        // (Assumindo que sua lógica de normalização já foi feita antes, ou pode aplicar aqui)
+        
+        UserSession session = getSession(user.getCompany().getId(), phoneNumber);
+
+        // Se tiver um atendente atribuído E não for o usuário atual
+        if (session.getAssignedUserId() != null && !session.getAssignedUserId().equals(user.getId())) {
+            throw new BusinessException(String.format(
+                "Acesso negado: Este atendimento pertence a %s (ID: %d).", 
+                session.getAssignedUserName(), 
+                session.getAssignedUserId()
+            ));
+        }
+    }
+
+    /**
      * Um atendente "puxa" o atendimento para si.
      */
     public void assignAgent(UserSession session, User agent) {
