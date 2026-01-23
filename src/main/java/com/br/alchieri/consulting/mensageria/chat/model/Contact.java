@@ -136,6 +136,9 @@ public class Contact {
     )
     private Set<Tag> tags = new HashSet<>();
 
+    @Column(name = "last_active_at")
+    private LocalDateTime lastActiveAt;
+
     @Column(nullable = false)
     @ColumnDefault("0") // Define o valor padrão no DDL
     private Integer unreadMessagesCount = 0; // Contador de mensagens não lidas

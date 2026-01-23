@@ -14,9 +14,9 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 import com.br.alchieri.consulting.mensageria.chat.dto.request.OutgoingMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.service.WhatsAppCloudApiService;
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.UserRepository;
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.model.User;
+import com.br.alchieri.consulting.mensageria.repository.UserRepository;
 
 import io.awspring.cloud.sqs.annotation.SqsListener;
 import io.github.bucket4j.Bucket;

@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.br.alchieri.consulting.mensageria.chat.dto.request.SendTextMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.webhook.WebhookEventPayload;
 import com.br.alchieri.consulting.mensageria.chat.model.Contact;
 import com.br.alchieri.consulting.mensageria.chat.model.Flow;
@@ -31,15 +32,24 @@ import com.br.alchieri.consulting.mensageria.chat.repository.FlowHealthAlertRepo
 import com.br.alchieri.consulting.mensageria.chat.repository.FlowRepository;
 import com.br.alchieri.consulting.mensageria.chat.repository.ScheduledMessageRepository;
 import com.br.alchieri.consulting.mensageria.chat.repository.WhatsAppMessageLogRepository;
+import com.br.alchieri.consulting.mensageria.chat.service.BotEngineService;
 import com.br.alchieri.consulting.mensageria.chat.service.CallbackService;
 import com.br.alchieri.consulting.mensageria.chat.service.FlowService;
 import com.br.alchieri.consulting.mensageria.chat.service.WebhookService;
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.CompanyRepository;
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.CompanyTierStatusRepository;
+import com.br.alchieri.consulting.mensageria.chat.service.WhatsAppCloudApiService;
+import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.CompanyTierStatus;
+import com.br.alchieri.consulting.mensageria.model.User;
+import com.br.alchieri.consulting.mensageria.model.enums.ConversationState;
+import com.br.alchieri.consulting.mensageria.model.enums.Role;
+import com.br.alchieri.consulting.mensageria.model.redis.UserSession;
+import com.br.alchieri.consulting.mensageria.repository.CompanyRepository;
+import com.br.alchieri.consulting.mensageria.repository.CompanyTierStatusRepository;
+import com.br.alchieri.consulting.mensageria.repository.UserRepository;
 import com.br.alchieri.consulting.mensageria.service.AdminNotificationService;
 import com.br.alchieri.consulting.mensageria.service.BillingService;
+import com.br.alchieri.consulting.mensageria.service.impl.SessionService;
 import com.br.alchieri.consulting.mensageria.util.SignatureUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -56,19 +66,25 @@ public class WebhookServiceImpl implements WebhookService {
 
     private final ObjectMapper objectMapper;
     private final SignatureUtil signatureUtil;
+    private final SqsTemplate sqsTemplate;
+    
     private final WhatsAppMessageLogRepository messageLogRepository;
     private final CompanyRepository companyRepository;
-    private final CallbackService callbackService;
     private final ContactRepository contactRepository;
     private final ScheduledMessageRepository scheduledMessageRepository;
-    private final SqsTemplate sqsTemplate;
     private final FlowHealthAlertRepository flowHealthAlertRepository;
-    private final AdminNotificationService adminNotificationService;
     private final FlowRepository flowRepository;
-    private final FlowService flowService;
     private final CompanyTierStatusRepository companyTierStatusRepository;
-    private final BillingService billingService;
     private final FlowDataRepository flowDataRepository;
+    private final UserRepository userRepository;
+    
+    private final CallbackService callbackService;
+    private final AdminNotificationService adminNotificationService;
+    private final FlowService flowService;
+    private final BillingService billingService;
+    private final SessionService sessionService;
+    private final WhatsAppCloudApiService whatsAppCloudApiService;
+    private final BotEngineService botEngineService;
 
     @Value("${webhook-queue.name}")
     private String webhookQueueName;
@@ -191,33 +207,29 @@ public class WebhookServiceImpl implements WebhookService {
                     JsonNode value = change.path("value");
 
                     if (!value.isMissingNode()) {
-                        // Roteamento baseado no campo 'field'
                         switch (field) {
                             case "messages":
                                 String webhookPhoneNumberId = value.path("metadata").path("phone_number_id").asText(null);
                                 Company companyForMessages = findCompanyByMetaPhoneNumberId(webhookPhoneNumberId);
                                 processMessagesFieldValue(value, companyForMessages);
                                 break;
-                            case "flows": // <<< NOVO CASE PARA EVENTOS DE FLOW
-                                // O ID da conta (WABA ID) está no nível 'entry'
+                            case "flows":
                                 handleFlowsField(value, wabaId);
                                 break;
                             case "account_update":
                                 handleAccountUpdateField(value, wabaId);
                                 break;
                             default:
-                                log.warn("Webhook com campo ('field') não reconhecido recebido: {}", field);
+                                log.warn("Webhook field unknown: {}", field);
                                 break;
                         }
-                    } else {
-                        log.warn("Webhook 'change' sem nó 'value': {}", change);
                     }
                 } catch (Exception e) {
-                    log.error("Erro ao processar 'change' individualmente: {}", change, e);
+                    log.error("Error processing entry change", e);
                 }
             }
         } else {
-            log.warn("Webhook 'entry' sem nó 'changes': {}", entry);
+            log.warn("Entry do webhook sem nó 'changes': {}", entry);
         }
     }
 
@@ -488,12 +500,15 @@ public class WebhookServiceImpl implements WebhookService {
         long ts = messageNode.path("timestamp").asLong();
         LocalDateTime messageTimestamp = Instant.ofEpochSecond(ts).atZone(ZoneId.systemDefault()).toLocalDateTime();
 
-        log.info("Processando mensagem recebida: WAMID={}, From={}, Type={}, EmpresaAssociadaAoNumero={}",
+        log.info("Processando mensagem recebida: WAMID={}, From={}, Type={}, Empresa={}", 
                 wamid, from, type, companyAssociatedWithWebhook != null ? companyAssociatedWithWebhook.getId() : "N/A");
 
+        // ---------------------------------------------------------
+        // 1. Persistência do Log (Mantendo sua lógica original robusta)
+        // ---------------------------------------------------------
         WhatsAppMessageLog newLog = new WhatsAppMessageLog();
         newLog.setWamid(wamid);
-        newLog.setCompany(companyAssociatedWithWebhook); // Associa a empresa dona do Phone Number ID
+        newLog.setCompany(companyAssociatedWithWebhook);
         newLog.setDirection(MessageDirection.INCOMING);
         newLog.setSender(from);
         newLog.setRecipient(ourPhoneNumber);
@@ -501,8 +516,6 @@ public class WebhookServiceImpl implements WebhookService {
         newLog.setStatus("RECEIVED");
         newLog.setCreatedAt(messageTimestamp);
         newLog.setUpdatedAt(messageTimestamp);
-        // Opcional: Se você puder identificar o User específico dentro da Company, associe-o
-        // newLog.setUser(findUserInCompanyBySenderNumber(companyAssociatedWithWebhook, from));
 
         try { 
             extractMessageContentAndMetadata(messageNode, newLog); 
@@ -513,25 +526,26 @@ public class WebhookServiceImpl implements WebhookService {
         }
 
         WhatsAppMessageLog savedLog = messageLogRepository.save(newLog);
-        log.debug("Log de mensagem recebida salvo com ID {} para WAMID {}", savedLog.getId(), wamid);
+        log.debug("Log salvo com ID {}", savedLog.getId());
 
-        // Extrai o nome do perfil (se disponível) para usar caso precise criar
+        // ---------------------------------------------------------
+        // 2. Resolução de Contato (Mantendo sua lógica original 9º Dígito)
+        // ---------------------------------------------------------
         String profileName = "Contato " + from; 
         if (contactsNode != null && contactsNode.isArray() && !contactsNode.isEmpty()) {
             profileName = contactsNode.get(0).path("profile").path("name").asText(profileName);
         }
-
-        // Chama o método auxiliar que resolve o problema do 9º dígito
         Contact contact = findOrSaveContact(companyAssociatedWithWebhook, from, profileName);
         
-        // =================================================================================
-
-        // Atualiza contadores e data
         contact.setUnreadMessagesCount(contact.getUnreadMessagesCount() + 1);
         contact.setUpdatedAt(LocalDateTime.now());
+        // Se sua entidade Contact tiver o campo lastActiveAt, atualize aqui:
+        // contact.setLastActiveAt(LocalDateTime.now());
         contactRepository.save(contact);
-        log.info("Contador de não lidas para o contato ID {} incrementado para {}", contact.getId(), contact.getUnreadMessagesCount());
 
+        // ---------------------------------------------------------
+        // 3. Processamento Específico de Flows (Mantendo original)
+        // ---------------------------------------------------------
         if ("interactive".equals(type) && messageNode.has("interactive")) {
             JsonNode interactiveNode = messageNode.path("interactive");
             if ("nfm_reply".equals(interactiveNode.path("type").asText())) {
@@ -543,13 +557,146 @@ public class WebhookServiceImpl implements WebhookService {
             }
         }
 
+        // ---------------------------------------------------------
+        // 4. Integração do BOT (ESTADO E SESSÃO) - NOVO
+        // ---------------------------------------------------------
+        if (companyAssociatedWithWebhook != null) {
+            try {
+                
+                UserSession session = sessionService.getSession(companyAssociatedWithWebhook.getId(), contact.getPhoneNumber());
+                User systemUser = getSystemUserForCompany(companyAssociatedWithWebhook);
+                
+                String botInput = extractContentForBot(messageNode, type);
+
+                // CENÁRIO 1: Usuário já está preso num bot ativo?
+                if (session.isBotActive()) {
+                    botEngineService.processInput(botInput, contact, session, systemUser);
+                } 
+                // CENÁRIO 2: Não está em bot. Devemos iniciar um?
+                else {
+                    boolean botStarted = botEngineService.tryTriggerBot(companyAssociatedWithWebhook, contact, session, systemUser);
+                    
+                    if (!botStarted) {
+                        // Se nenhum bot assumiu, cai no fallback (atendimento humano ou auto-resposta padrão simples)
+                        log.info("Nenhum bot ativo para o cenário atual. Mensagem entregue para caixa de entrada.");
+                    }
+                }
+            } catch (Exception e) {
+                log.error("Erro no motor de bot: {}", e.getMessage(), e);
+            }
+        }
+
+        // ---------------------------------------------------------
+        // 5. Callbacks (Mantendo original)
+        // ---------------------------------------------------------
         if (companyAssociatedWithWebhook != null && companyAssociatedWithWebhook.getGeneralCallbackUrl() != null && !companyAssociatedWithWebhook.getGeneralCallbackUrl().isBlank()) {
             callbackService.sendIncomingMessageCallback(companyAssociatedWithWebhook.getId(), savedLog.getId());
-        } else if (companyAssociatedWithWebhook != null) {
-            log.debug("Callback de msg recebida para WAMID {} não enviado: Empresa {} sem URL de callback.", wamid, companyAssociatedWithWebhook.getId());
         } else {
-            log.warn("Callback de mensagem recebida para WAMID {} não enviado, pois a empresa não foi identificada.", wamid);
+            log.debug("Callback não enviado: URL ausente ou empresa nula.");
         }
+    }
+
+    private void processBotFlow(ConversationState state, String input, String type, Contact contact, UserSession session, Company company) {
+        User systemUser = getSystemUserForCompany(company); 
+
+        switch (state) {
+            case IDLE:
+                if (isGreeting(input)) {
+                    sendMainMenu(contact, systemUser);
+                    sessionService.updateState(session, ConversationState.WAITING_MENU_OPTION);
+                }
+                break;
+
+            case WAITING_MENU_OPTION:
+                handleMenuOption(input, contact, session, systemUser);
+                break;
+
+            case WAITING_DOCUMENT:
+                // Exemplo simples
+                if (input != null && input.replaceAll("\\D", "").length() == 11) {
+                    session.addContextData("cpf", input);
+                    whatsAppCloudApiService.sendTextMessage(
+                        createRequest(contact.getPhoneNumber(), "CPF recebido! Simulando consulta..."), 
+                        systemUser
+                    ).subscribe();
+                    sessionService.resetSession(session);
+                } else {
+                     whatsAppCloudApiService.sendTextMessage(
+                        createRequest(contact.getPhoneNumber(), "CPF inválido. Tente novamente."), 
+                        systemUser
+                    ).subscribe();
+                }
+                break;
+                
+            default:
+                // Se estado desconhecido, reseta (fail-safe)
+                sessionService.resetSession(session);
+                break;
+        }
+    }
+
+    private void handleMenuOption(String input, Contact contact, UserSession session, User systemUser) {
+        
+        String option = input.trim().toLowerCase();
+
+        if (option.equals("1") || option.contains("financeiro")) {
+            whatsAppCloudApiService.sendTextMessage(
+                createRequest(contact.getPhoneNumber(), "Opção Financeiro selecionada. Digite seu CPF:"), 
+                systemUser
+            ).subscribe();
+            sessionService.updateState(session, ConversationState.WAITING_DOCUMENT);
+
+        } else if (option.equals("2") || option.contains("suporte")) {
+            whatsAppCloudApiService.sendTextMessage(
+                createRequest(contact.getPhoneNumber(), "Transferindo para humano..."), 
+                systemUser
+            ).subscribe();
+            sessionService.updateState(session, ConversationState.IN_SERVICE_HUMAN);
+
+        } else {
+            whatsAppCloudApiService.sendTextMessage(
+                createRequest(contact.getPhoneNumber(), "Opção inválida. Digite 1 (Financeiro) ou 2 (Suporte)."), 
+                systemUser
+            ).subscribe();
+        }
+    }
+
+    private void sendMainMenu(Contact contact, User systemUser) {
+        String menu = "Olá " + contact.getName() + "! Escolha uma opção:\n1️⃣ Financeiro\n2️⃣ Suporte";
+        whatsAppCloudApiService.sendTextMessage(createRequest(contact.getPhoneNumber(), menu), systemUser).subscribe();
+    }
+
+    private String extractContentForBot(JsonNode messageNode, String type) {
+        if ("text".equals(type)) {
+            return messageNode.path("text").path("body").asText();
+        } else if ("interactive".equals(type)) {
+            JsonNode interactive = messageNode.path("interactive");
+            String subType = interactive.path("type").asText();
+            if ("button_reply".equals(subType)) return interactive.path("button_reply").path("id").asText();
+            if ("list_reply".equals(subType)) return interactive.path("list_reply").path("id").asText();
+        }
+        return "";
+    }
+
+    private boolean isGreeting(String text) {
+        if (text == null) return false;
+        String t = text.toLowerCase();
+        return t.contains("oi") || t.contains("olá") || t.contains("ola") || t.contains("bom dia") || t.contains("boa tarde") || t.equals("menu");
+    }
+    
+    private SendTextMessageRequest createRequest(String to, String body) {
+        SendTextMessageRequest req = new SendTextMessageRequest();
+        req.setTo(to);
+        req.setMessage(body);
+        return req;
+    }
+    
+    private User getSystemUserForCompany(Company company) {
+        
+        return userRepository.findFirstByCompanyAndRole(company, Role.ROLE_COMPANY_ADMIN)
+                // Se não achar, tenta buscar um Admin do BSP vinculado à empresa (fallback)
+                .or(() -> userRepository.findFirstByCompanyAndRole(company, Role.ROLE_BSP_ADMIN))
+                .orElseThrow(() -> new BusinessException("Empresa " + company.getId() + " não possui usuários administradores válidos para envio de bot."));
     }
 
     /**
@@ -625,7 +772,7 @@ public class WebhookServiceImpl implements WebhookService {
 
     @SuppressWarnings("static-access")
     private void extractMessageContentAndMetadata(JsonNode messageNode, WhatsAppMessageLog log) throws JsonProcessingException {
-        // ... (Implementação anterior de extractMessageContentAndMetadata) ...
+        
         String type = log.getMessageType().toLowerCase();
         log.setContent(null);
         log.setMetadata(null);

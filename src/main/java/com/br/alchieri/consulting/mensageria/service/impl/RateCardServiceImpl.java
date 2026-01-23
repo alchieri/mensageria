@@ -7,11 +7,11 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.MetaRateCardRepository;
 import com.br.alchieri.consulting.mensageria.dto.request.RateCardRequest;
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.exception.ResourceNotFoundException;
 import com.br.alchieri.consulting.mensageria.model.MetaRateCard;
+import com.br.alchieri.consulting.mensageria.repository.MetaRateCardRepository;
 import com.br.alchieri.consulting.mensageria.service.RateCardService;
 
 import lombok.RequiredArgsConstructor;

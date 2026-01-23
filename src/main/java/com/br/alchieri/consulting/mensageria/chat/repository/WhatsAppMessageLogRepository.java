@@ -18,6 +18,8 @@ public interface WhatsAppMessageLogRepository extends JpaRepository<WhatsAppMess
 
     Optional<WhatsAppMessageLog> findByWamid(String wamid);
 
+    boolean existsByWamid(String wamid);
+
     @Query("SELECT log FROM WhatsAppMessageLog log LEFT JOIN FETCH log.company WHERE log.id = :id")
     Optional<WhatsAppMessageLog> findByIdWithCompany(@Param("id") Long id);
 

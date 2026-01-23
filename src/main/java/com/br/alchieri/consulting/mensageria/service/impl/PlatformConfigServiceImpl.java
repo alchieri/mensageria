@@ -26,13 +26,13 @@ import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import com.br.alchieri.consulting.mensageria.chat.model.enums.TemplateCategory;
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.CompanyRepository;
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.MetaRateCardRepository;
 import com.br.alchieri.consulting.mensageria.dto.response.ApiResponse;
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.exception.ResourceNotFoundException;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.MetaRateCard;
+import com.br.alchieri.consulting.mensageria.repository.CompanyRepository;
+import com.br.alchieri.consulting.mensageria.repository.MetaRateCardRepository;
 import com.br.alchieri.consulting.mensageria.service.PlatformConfigService;
 import com.br.alchieri.consulting.mensageria.util.CountryCodeMapper;
 import com.fasterxml.jackson.databind.JsonNode;

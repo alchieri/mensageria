@@ -31,9 +31,11 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 import com.br.alchieri.consulting.mensageria.chat.dto.meta.InteractivePayload;
 import com.br.alchieri.consulting.mensageria.chat.dto.meta.WhatsAppCloudApiRequest;
+import com.br.alchieri.consulting.mensageria.chat.dto.meta.WhatsAppCloudApiRequest.MediaPayload;
 import com.br.alchieri.consulting.mensageria.chat.dto.meta.WhatsAppTemplatePayload;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.OutgoingMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendInteractiveFlowMessageRequest;
+import com.br.alchieri.consulting.mensageria.chat.dto.request.SendMediaMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendMultiProductMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendProductMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendTemplateMessageRequest;
@@ -51,13 +53,13 @@ import com.br.alchieri.consulting.mensageria.chat.repository.FlowRepository;
 import com.br.alchieri.consulting.mensageria.chat.repository.MediaUploadRepository;
 import com.br.alchieri.consulting.mensageria.chat.repository.WhatsAppMessageLogRepository;
 import com.br.alchieri.consulting.mensageria.chat.service.WhatsAppCloudApiService;
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.UserRepository;
 import com.br.alchieri.consulting.mensageria.chat.util.TemplateParameterGenerator;
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.exception.ResourceNotFoundException;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.User;
 import com.br.alchieri.consulting.mensageria.model.enums.Role;
+import com.br.alchieri.consulting.mensageria.repository.UserRepository;
 import com.br.alchieri.consulting.mensageria.service.BillingService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -215,6 +217,23 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
                     return metaMediaId; // Retorna o mediaId para o cliente
                 }).subscribeOn(Schedulers.boundedElastic());
             });
+    }
+
+    @Override
+    public Mono<Void> sendMediaMessage(SendMediaMessageRequest request, User user) {
+        Company company = getCompanyFromUser(user);
+
+        if (!billingService.canCompanySendMessages(company, 1)) {
+            return Mono.error(new BusinessException("Limite de envio de mensagens excedido."));
+        }
+
+        // Constrói o payload dinâmico baseado no tipo
+        WhatsAppCloudApiRequest metaRequest = buildMediaMetaRequest(request);
+
+        return executeSendMessage(metaRequest, user, company, 
+                request.getType().toUpperCase(), 
+                "Envio de Mídia (" + request.getType() + "): " + request.getMediaId(), 
+                null);
     }
 
     @Override
@@ -792,5 +811,66 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
                 .type("interactive")
                 .interactive(interactive)
                 .build();
+    }
+
+    private WhatsAppCloudApiRequest buildMediaMetaRequest(SendMediaMessageRequest request) {
+        WhatsAppCloudApiRequest.WhatsAppCloudApiRequestBuilder builder = WhatsAppCloudApiRequest.builder()
+                .to(request.getTo())
+                .type(request.getType());
+
+        // A estrutura da Meta muda ligeiramente por tipo
+        // Ex: "image": { "id": "...", "caption": "..." }
+        
+        switch (request.getType()) {
+            case "image":
+                builder.image(createMediaObject(request));
+                break;
+            case "document":
+                builder.document(createMediaObject(request));
+                break;
+            case "audio":
+                builder.audio(createMediaObject(request)); // Audio não suporta caption
+                break;
+            case "video":
+                builder.video(createMediaObject(request));
+                break;
+            case "sticker":
+                builder.sticker(createMediaObject(request)); // Sticker não suporta caption
+                break;
+            default:
+                throw new BusinessException("Tipo de mídia não suportado: " + request.getType());
+        }
+
+        return builder.build();
+    }
+
+    // Cria o objeto interno (MediaPayload) reutilizável
+    private MediaPayload createMediaObject(SendMediaMessageRequest request) {
+        // Inicia o Builder
+        MediaPayload.MediaPayloadBuilder mediaBuilder = MediaPayload.builder();
+
+        // 1. ID ou Link (Prioridade para ID)
+        // Se sua request suportar Link, você pode adicionar a lógica aqui. 
+        // Por padrão, assumimos ID vindo do SendMediaMessageRequest.
+        mediaBuilder.id(request.getMediaId());
+
+        // 2. Regra de Caption (Legenda)
+        // Permitido apenas para: Image, Document, Video
+        // Proibido para: Audio, Sticker (A Meta rejeita se enviar)
+        boolean supportsCaption = !"audio".equals(request.getType()) && !"sticker".equals(request.getType());
+        
+        if (supportsCaption && request.getCaption() != null && !request.getCaption().isBlank()) {
+            mediaBuilder.caption(request.getCaption());
+        }
+
+        // 3. Regra de Filename (Nome do arquivo)
+        // Permitido apenas para: Document
+        boolean supportsFilename = "document".equals(request.getType());
+        
+        if (supportsFilename && request.getFilename() != null && !request.getFilename().isBlank()) {
+            mediaBuilder.filename(request.getFilename());
+        }
+
+        return mediaBuilder.build();
     }
 }

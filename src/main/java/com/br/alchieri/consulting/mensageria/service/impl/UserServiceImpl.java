@@ -20,8 +20,6 @@ import org.springframework.util.StringUtils;
 
 import com.br.alchieri.consulting.mensageria.chat.dto.request.CompanyCreateUserRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.CompanyUpdateUserRequest;
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.CompanyRepository;
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.UserRepository;
 import com.br.alchieri.consulting.mensageria.dto.request.AdminCreateUserRequest;
 import com.br.alchieri.consulting.mensageria.dto.request.AdminUpdateUserRequest;
 import com.br.alchieri.consulting.mensageria.dto.request.RegisterUserRequest;
@@ -30,6 +28,8 @@ import com.br.alchieri.consulting.mensageria.exception.ResourceNotFoundException
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.User;
 import com.br.alchieri.consulting.mensageria.model.enums.Role;
+import com.br.alchieri.consulting.mensageria.repository.CompanyRepository;
+import com.br.alchieri.consulting.mensageria.repository.UserRepository;
 import com.br.alchieri.consulting.mensageria.service.UserService;
 
 import lombok.RequiredArgsConstructor;

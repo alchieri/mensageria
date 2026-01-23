@@ -13,8 +13,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.CompanyRepository;
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.UserRepository;
 import com.br.alchieri.consulting.mensageria.dto.request.CreateCompanyRequest;
 import com.br.alchieri.consulting.mensageria.dto.request.UpdateCallbacksRequest;
 import com.br.alchieri.consulting.mensageria.dto.request.UpdateCompanyRequest;
@@ -24,6 +22,8 @@ import com.br.alchieri.consulting.mensageria.model.Address;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.User;
 import com.br.alchieri.consulting.mensageria.model.enums.Role;
+import com.br.alchieri.consulting.mensageria.repository.CompanyRepository;
+import com.br.alchieri.consulting.mensageria.repository.UserRepository;
 import com.br.alchieri.consulting.mensageria.service.CompanyService;
 
 import lombok.RequiredArgsConstructor;

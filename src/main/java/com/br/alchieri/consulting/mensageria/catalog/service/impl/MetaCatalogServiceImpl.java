@@ -25,9 +25,9 @@ import com.br.alchieri.consulting.mensageria.catalog.model.Product;
 import com.br.alchieri.consulting.mensageria.catalog.repository.CatalogRepository;
 import com.br.alchieri.consulting.mensageria.catalog.repository.ProductRepository;
 import com.br.alchieri.consulting.mensageria.catalog.service.MetaCatalogService;
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.CompanyRepository;
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.model.Company;
+import com.br.alchieri.consulting.mensageria.repository.CompanyRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import lombok.RequiredArgsConstructor;

@@ -18,8 +18,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.CompanyRepository;
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.InvoiceRepository;
 import com.br.alchieri.consulting.mensageria.dto.request.CreateBillingPlanRequest;
 import com.br.alchieri.consulting.mensageria.dto.response.BillingPlanResponse;
 import com.br.alchieri.consulting.mensageria.dto.response.InvoiceResponse;
@@ -28,6 +26,8 @@ import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.model.BillingPlan;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.Invoice;
+import com.br.alchieri.consulting.mensageria.repository.CompanyRepository;
+import com.br.alchieri.consulting.mensageria.repository.InvoiceRepository;
 import com.br.alchieri.consulting.mensageria.service.BillingService;
 import com.br.alchieri.consulting.mensageria.util.SecurityUtils;
 

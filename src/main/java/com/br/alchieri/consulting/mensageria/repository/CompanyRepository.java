@@ -1,4 +1,4 @@
-package com.br.alchieri.consulting.mensageria.chat.service.impl.repository;
+package com.br.alchieri.consulting.mensageria.repository;
 
 import java.util.Optional;
 

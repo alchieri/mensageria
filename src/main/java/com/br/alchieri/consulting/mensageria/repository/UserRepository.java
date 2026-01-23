@@ -1,4 +1,4 @@
-package com.br.alchieri.consulting.mensageria.chat.service.impl.repository;
+package com.br.alchieri.consulting.mensageria.repository;
 
 import java.util.Optional;
 
@@ -16,5 +16,6 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByUsername(String username);
     Optional<User> findByEmail(String email);
     Page<User> findByCompany(Company company, Pageable pageable);
+    Optional<User> findFirstByCompanyAndRole(Company company, Role role);
     long countByCompanyAndRolesContaining(Company company, Role role);
 }

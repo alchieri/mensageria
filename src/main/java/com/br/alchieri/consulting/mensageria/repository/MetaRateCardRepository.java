@@ -1,4 +1,4 @@
-package com.br.alchieri.consulting.mensageria.chat.service.impl.repository;
+package com.br.alchieri.consulting.mensageria.repository;
 
 import java.time.LocalDate;
 import java.util.Optional;

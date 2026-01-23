@@ -12,10 +12,10 @@ import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.ApiKeyRepository;
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.model.ApiKey;
 import com.br.alchieri.consulting.mensageria.model.User;
+import com.br.alchieri.consulting.mensageria.repository.ApiKeyRepository;
 import com.br.alchieri.consulting.mensageria.service.ApiKeyService;
 
 import lombok.RequiredArgsConstructor;

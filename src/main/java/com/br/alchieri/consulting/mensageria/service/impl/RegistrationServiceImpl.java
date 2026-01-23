@@ -7,14 +7,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.br.alchieri.consulting.mensageria.chat.model.enums.OnboardingStatus;
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.CompanyRepository;
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.UserRepository;
 import com.br.alchieri.consulting.mensageria.dto.request.PublicRegistrationRequest;
 import com.br.alchieri.consulting.mensageria.dto.response.RegistrationResponse;
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.User;
 import com.br.alchieri.consulting.mensageria.model.enums.Role;
+import com.br.alchieri.consulting.mensageria.repository.CompanyRepository;
+import com.br.alchieri.consulting.mensageria.repository.UserRepository;
 import com.br.alchieri.consulting.mensageria.service.RegistrationService;
 
 import lombok.RequiredArgsConstructor;

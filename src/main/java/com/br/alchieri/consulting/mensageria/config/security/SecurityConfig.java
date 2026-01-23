@@ -42,6 +42,7 @@ public class SecurityConfig {
 
     private static final String[] PUBLIC_WHITELIST = {
         "/swagger-ui.html",
+        "/v3/api-docs/**",
         "/swagger-ui/**",
         "/swagger-resources/**",
         "/v3/api-docs/swagger-config",
@@ -66,11 +67,11 @@ public class SecurityConfig {
                 .requestMatchers("/v3/api-docs", "/v3/api-docs/public").permitAll()
 
                 // 2. Grupos restritos (Exigem Login/Token)
-                .requestMatchers("/v3/api-docs/admin").hasRole(Role.ROLE_BSP_ADMIN.name().replace("ROLE_", ""))
-                .requestMatchers("/v3/api-docs/integracao").hasAnyRole(Role.ROLE_COMPANY_ADMIN.name().replace("ROLE_", ""), 
-                                                                                    Role.ROLE_BSP_ADMIN.name().replace("ROLE_", ""), 
-                                                                                    Role.ROLE_API_CLIENT.name().replace("ROLE_", ""),
-                                                                                    Role.ROLE_USER.name().replace("ROLE_", ""))
+                // .requestMatchers("/v3/api-docs/admin").hasRole(Role.ROLE_BSP_ADMIN.name().replace("ROLE_", ""))
+                // .requestMatchers("/v3/api-docs/integracao").hasAnyRole(Role.ROLE_COMPANY_ADMIN.name().replace("ROLE_", ""), 
+                //                                                                     Role.ROLE_BSP_ADMIN.name().replace("ROLE_", ""), 
+                //                                                                     Role.ROLE_API_CLIENT.name().replace("ROLE_", ""),
+                //                                                                     Role.ROLE_USER.name().replace("ROLE_", ""))
 
                 // 3. Bloqueia listagem geral raiz (opcional, segurança extra)
                 // .requestMatchers("/v3/api-docs").authenticated()

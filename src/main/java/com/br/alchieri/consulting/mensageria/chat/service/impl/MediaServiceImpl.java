@@ -12,12 +12,12 @@ import org.springframework.transaction.annotation.Transactional;
 import com.br.alchieri.consulting.mensageria.chat.model.MediaUpload;
 import com.br.alchieri.consulting.mensageria.chat.repository.MediaUploadRepository;
 import com.br.alchieri.consulting.mensageria.chat.service.MediaService;
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.CompanyRepository;
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.exception.ResourceNotFoundException;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.User;
 import com.br.alchieri.consulting.mensageria.model.enums.Role;
+import com.br.alchieri.consulting.mensageria.repository.CompanyRepository;
 
 import lombok.RequiredArgsConstructor;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;

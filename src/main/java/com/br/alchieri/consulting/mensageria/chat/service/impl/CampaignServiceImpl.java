@@ -24,12 +24,12 @@ import com.br.alchieri.consulting.mensageria.chat.repository.ScheduledCampaignRe
 import com.br.alchieri.consulting.mensageria.chat.repository.ScheduledMessageRepository;
 import com.br.alchieri.consulting.mensageria.chat.service.CallbackService;
 import com.br.alchieri.consulting.mensageria.chat.service.CampaignService;
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.CompanyRepository;
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.exception.ResourceNotFoundException;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.User;
 import com.br.alchieri.consulting.mensageria.model.enums.Role;
+import com.br.alchieri.consulting.mensageria.repository.CompanyRepository;
 import com.br.alchieri.consulting.mensageria.service.BillingService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;

@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.BulkMessageTemplateRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.OutgoingMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendInteractiveFlowMessageRequest;
+import com.br.alchieri.consulting.mensageria.chat.dto.request.SendMediaMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendMultiProductMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendProductMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendTemplateMessageRequest;
@@ -205,6 +206,22 @@ public class MessageController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                    .body(new ApiResponse(false, "Erro ao enfileirar a solicitação de envio.", null));
         }
+    }
+
+    @PostMapping("/media")
+    @Operation(summary = "Enviar Mensagem de Mídia", description = "Envia imagem, vídeo, documento ou áudio usando um ID de mídia.")
+    public ResponseEntity<ApiResponse> sendMediaMessage(
+            @Valid @RequestBody SendMediaMessageRequest request) {
+        
+        User currentUser = securityUtils.getAuthenticatedUser();
+        
+        // Normaliza telefone
+        request.setTo(normalizePhoneNumber(request.getTo()));
+        
+        // Executa envio
+        whatsAppCloudApiService.sendMediaMessage(request, currentUser).block();
+
+        return ResponseEntity.ok(new ApiResponse(true, "Mensagem de mídia enviada/enfileirada.", null));
     }
 
     // O endpoint GET para status permanece, mas agora ele consulta o banco de dados

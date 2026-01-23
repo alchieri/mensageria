@@ -5,7 +5,7 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
-import com.br.alchieri.consulting.mensageria.chat.service.impl.repository.UserRepository;
+import com.br.alchieri.consulting.mensageria.repository.UserRepository;
 
 import lombok.RequiredArgsConstructor;
 
