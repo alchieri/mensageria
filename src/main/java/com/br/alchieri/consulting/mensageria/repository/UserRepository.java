@@ -14,10 +14,9 @@ import com.br.alchieri.consulting.mensageria.model.enums.Role;
 @Repository
 public interface UserRepository extends JpaRepository<User, Long> {
 
-    // Método para buscar cliente pelo username (usado pelo Spring Security)
     Optional<User> findByUsername(String username);
     Optional<User> findByEmail(String email);
     Page<User> findByCompany(Company company, Pageable pageable);
-    Optional<User> findFirstByCompanyAndRole(Company company, Role role);
+    Optional<User> findFirstByCompanyAndRolesContaining(Company company, Role role);
     long countByCompanyAndRolesContaining(Company company, Role role);
 }

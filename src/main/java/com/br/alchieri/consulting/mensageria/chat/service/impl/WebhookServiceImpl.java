@@ -693,9 +693,9 @@ public class WebhookServiceImpl implements WebhookService {
     
     private User getSystemUserForCompany(Company company) {
         
-        return userRepository.findFirstByCompanyAndRole(company, Role.ROLE_COMPANY_ADMIN)
+        return userRepository.findFirstByCompanyAndRolesContaining(company, Role.ROLE_COMPANY_ADMIN)
                 // Se não achar, tenta buscar um Admin do BSP vinculado à empresa (fallback)
-                .or(() -> userRepository.findFirstByCompanyAndRole(company, Role.ROLE_BSP_ADMIN))
+                .or(() -> userRepository.findFirstByCompanyAndRolesContaining(company, Role.ROLE_BSP_ADMIN))
                 .orElseThrow(() -> new BusinessException("Empresa " + company.getId() + " não possui usuários administradores válidos para envio de bot."));
     }
 
