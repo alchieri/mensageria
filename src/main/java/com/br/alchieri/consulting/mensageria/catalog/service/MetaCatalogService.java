@@ -10,7 +10,11 @@ import reactor.core.publisher.Mono;
 
 public interface MetaCatalogService {
 
-    Mono<Catalog> createCatalog(String catalogName, Company company); // Novo método
+    Mono<Catalog> createCatalog(String catalogName, Company company);
     Mono<Void> upsertProducts(List<ProductSyncRequest> products, Company company);
     Mono<Void> deleteProducts(List<String> skus, Company company);
+
+    // NOVOS MÉTODOS DE SINCRONIZAÇÃO (Inbound)
+    void syncCatalogsFromMeta(Company company);
+    void syncProductsFromMeta(Long localCatalogId, Company company);
 }

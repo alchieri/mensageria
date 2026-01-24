@@ -3,7 +3,7 @@ package com.br.alchieri.consulting.mensageria.chat.service;
 import java.util.List;
 
 import com.br.alchieri.consulting.mensageria.chat.dto.request.BotStructureRequest;
-import com.br.alchieri.consulting.mensageria.chat.dto.request.CreateBotRequest;
+import com.br.alchieri.consulting.mensageria.chat.dto.request.CreateBotWithStructureRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.UpdateBotRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.response.BotResponseDTO;
 import com.br.alchieri.consulting.mensageria.chat.dto.response.BotStepDTO;
@@ -13,7 +13,7 @@ public interface BotManagementService {
 
     List<BotResponseDTO> listBots(Company company);
 
-    BotResponseDTO createBot(Company company, CreateBotRequest request);
+    BotResponseDTO createBotWithStructure(Company company, CreateBotWithStructureRequest request);
 
     BotResponseDTO updateBot(Long botId, UpdateBotRequest request, Company company);
 

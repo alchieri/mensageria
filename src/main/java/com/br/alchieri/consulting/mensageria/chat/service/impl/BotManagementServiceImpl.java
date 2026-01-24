@@ -14,6 +14,7 @@ import com.br.alchieri.consulting.mensageria.chat.dto.request.BotOptionStructure
 import com.br.alchieri.consulting.mensageria.chat.dto.request.BotStepStructureDTO;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.BotStructureRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.CreateBotRequest;
+import com.br.alchieri.consulting.mensageria.chat.dto.request.CreateBotWithStructureRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.UpdateBotRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.response.BotOptionDTO;
 import com.br.alchieri.consulting.mensageria.chat.dto.response.BotResponseDTO;
@@ -50,7 +51,8 @@ public class BotManagementServiceImpl implements BotManagementService {
 
     @Transactional
     @Override
-    public BotResponseDTO createBot(Company company, CreateBotRequest request) {
+    public BotResponseDTO createBotWithStructure(Company company, CreateBotWithStructureRequest request) {
+        // 1. Criar e Salvar o Cabeçalho do Bot (Metadados)
         Bot bot = new Bot();
         bot.setCompany(company);
         bot.setName(request.getName());
@@ -60,17 +62,26 @@ public class BotManagementServiceImpl implements BotManagementService {
         bot.setActiveDays(request.getActiveDays());
         bot.setActive(true);
 
-        // Cria automaticamente um Root Step para o bot não nascer quebrado
-        BotStep rootStep = new BotStep();
-        rootStep.setTitle("Início");
-        rootStep.setStepType(BotStepType.TEXT);
-        rootStep.setContent("Olá! Eu sou o assistente virtual.");
-        botStepRepository.save(rootStep);
+        // Salvamos para obter o ID (necessário para os passos referenciarem)
+        bot = botRepository.save(bot);
 
-        bot.setRootStep(rootStep);
-        Bot savedBot = botRepository.save(bot);
+        // 2. Processar a Estrutura (Steps)
+        // Verificamos se há passos para salvar
+        if (request.getSteps() != null && !request.getSteps().isEmpty()) {
+            
+            // Convertemos para o DTO que o método de estrutura espera
+            BotStructureRequest structureRequest = new BotStructureRequest();
+            structureRequest.setRootStepTempId(request.getRootStepTempId());
+            structureRequest.setSteps(request.getSteps());
 
-        return toBotDTO(savedBot);
+            // REUTILIZAÇÃO: Chamamos a lógica de grafo existente
+            saveBotStructure(bot.getId(), structureRequest, company);
+            
+            // Recarrega o bot para garantir que o rootStep esteja atualizado no objeto
+            bot = botRepository.findById(bot.getId()).orElseThrow();
+        }
+
+        return toBotDTO(bot);
     }
 
     @Transactional

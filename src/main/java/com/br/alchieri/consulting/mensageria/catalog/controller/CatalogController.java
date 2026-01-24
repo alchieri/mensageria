@@ -5,6 +5,7 @@ import java.util.Map;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -72,5 +73,21 @@ public class CatalogController {
         metaCatalogService.deleteProducts(skus, company).block();
 
         return ResponseEntity.ok(new ApiResponse(true, "Solicitação de exclusão enviada.", null));
+    }
+
+    @PostMapping("/sync")
+    @Operation(summary = "Sincronizar Catálogos", description = "Busca catálogos existentes na conta da Meta e cria/atualiza no banco local.")
+    public ResponseEntity<ApiResponse> syncCatalogs() {
+        User user = securityUtils.getAuthenticatedUser();
+        metaCatalogService.syncCatalogsFromMeta(user.getCompany());
+        return ResponseEntity.ok(new ApiResponse(true, "Sincronização de catálogos iniciada.", null));
+    }
+
+    @PostMapping("/{catalogId}/products/sync")
+    @Operation(summary = "Sincronizar Produtos", description = "Busca produtos de um catálogo específico na Meta e cria/atualiza no banco local.")
+    public ResponseEntity<ApiResponse> syncProducts(@PathVariable Long catalogId) {
+        User user = securityUtils.getAuthenticatedUser();
+        metaCatalogService.syncProductsFromMeta(catalogId, user.getCompany());
+        return ResponseEntity.ok(new ApiResponse(true, "Sincronização de produtos iniciada.", null));
     }
 }

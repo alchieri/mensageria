@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.br.alchieri.consulting.mensageria.chat.dto.request.BotStructureRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.CreateBotRequest;
+import com.br.alchieri.consulting.mensageria.chat.dto.request.CreateBotWithStructureRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.UpdateBotRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.response.BotResponseDTO;
 import com.br.alchieri.consulting.mensageria.chat.dto.response.BotStepDTO;
@@ -55,27 +56,19 @@ public class BotController {
     }
 
     @PostMapping
-    @Operation(summary = "Criar Novo Bot", description = "Cria um novo bot. Um passo inicial (ROOT) é criado automaticamente.")
+    @Operation(summary = "Criar Bot Completo", 
+               description = "Cria um novo bot definindo suas configurações e, opcionalmente, toda a sua estrutura de passos de uma vez.")
     @ApiResponses(value = {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Bot criado com sucesso"),
-        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Dados inválidos", content = @Content)
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Dados inválidos")
     })
-    public ResponseEntity<ApiResponse> createBot(@Valid @RequestBody CreateBotRequest request) {
+    public ResponseEntity<ApiResponse> createBot(@Valid @RequestBody CreateBotWithStructureRequest request) {
         User user = securityUtils.getAuthenticatedUser();
-        BotResponseDTO bot = botService.createBot(user.getCompany(), request);
+        
+        // Chama o novo serviço completo
+        BotResponseDTO bot = botService.createBotWithStructure(user.getCompany(), request);
+        
         return ResponseEntity.ok(new ApiResponse(true, "Bot criado com sucesso", bot));
-    }
-
-    @PutMapping("/{id}")
-    @Operation(summary = "Atualizar Bot", description = "Atualiza configurações gerais do bot, como nome, horários, gatilhos e status ativo/inativo.")
-    public ResponseEntity<ApiResponse> updateBot(
-            @PathVariable Long id, 
-            @Valid @RequestBody UpdateBotRequest request) {
-        
-        User user = securityUtils.getAuthenticatedUser();
-        BotResponseDTO updated = botService.updateBot(id, request, user.getCompany());
-        
-        return ResponseEntity.ok(new ApiResponse(true, "Bot atualizado com sucesso", updated));
     }
 
     @DeleteMapping("/{id}")
