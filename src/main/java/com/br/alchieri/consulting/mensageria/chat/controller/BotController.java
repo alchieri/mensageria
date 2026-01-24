@@ -13,7 +13,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.br.alchieri.consulting.mensageria.chat.dto.request.BotStructureRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.CreateBotRequest;
+import com.br.alchieri.consulting.mensageria.chat.dto.request.UpdateBotRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.response.BotResponseDTO;
 import com.br.alchieri.consulting.mensageria.chat.dto.response.BotStepDTO;
 import com.br.alchieri.consulting.mensageria.chat.service.BotManagementService;
@@ -22,6 +24,7 @@ import com.br.alchieri.consulting.mensageria.model.User;
 import com.br.alchieri.consulting.mensageria.util.SecurityUtils;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -61,6 +64,18 @@ public class BotController {
         User user = securityUtils.getAuthenticatedUser();
         BotResponseDTO bot = botService.createBot(user.getCompany(), request);
         return ResponseEntity.ok(new ApiResponse(true, "Bot criado com sucesso", bot));
+    }
+
+    @PutMapping("/{id}")
+    @Operation(summary = "Atualizar Bot", description = "Atualiza configurações gerais do bot, como nome, horários, gatilhos e status ativo/inativo.")
+    public ResponseEntity<ApiResponse> updateBot(
+            @PathVariable Long id, 
+            @Valid @RequestBody UpdateBotRequest request) {
+        
+        User user = securityUtils.getAuthenticatedUser();
+        BotResponseDTO updated = botService.updateBot(id, request, user.getCompany());
+        
+        return ResponseEntity.ok(new ApiResponse(true, "Bot atualizado com sucesso", updated));
     }
 
     @DeleteMapping("/{id}")
@@ -119,5 +134,18 @@ public class BotController {
 
         botService.linkSteps(originStepId, targetStepId, keyword, label);
         return ResponseEntity.ok(new ApiResponse(true, "Passos conectados", null));
+    }
+
+    @PutMapping("/{id}/structure")
+    @Operation(summary = "Salvar Estrutura (Fluxo) do Bot", 
+               description = "Substitui/Sincroniza toda a árvore de passos e opções do bot. Ideal para editores visuais de fluxo.")
+    public ResponseEntity<ApiResponse> saveBotStructure(
+            @Parameter(description = "ID do Bot") @PathVariable Long id,
+            @Valid @RequestBody BotStructureRequest request) {
+        
+        User user = securityUtils.getAuthenticatedUser();
+        botService.saveBotStructure(id, request, user.getCompany());
+        
+        return ResponseEntity.ok(new ApiResponse(true, "Estrutura do bot salva com sucesso.", null));
     }
 }

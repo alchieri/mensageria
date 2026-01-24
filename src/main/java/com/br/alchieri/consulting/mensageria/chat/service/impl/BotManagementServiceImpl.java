@@ -1,12 +1,20 @@
 package com.br.alchieri.consulting.mensageria.chat.service.impl;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.br.alchieri.consulting.mensageria.chat.dto.request.BotOptionStructureDTO;
+import com.br.alchieri.consulting.mensageria.chat.dto.request.BotStepStructureDTO;
+import com.br.alchieri.consulting.mensageria.chat.dto.request.BotStructureRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.CreateBotRequest;
+import com.br.alchieri.consulting.mensageria.chat.dto.request.UpdateBotRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.response.BotOptionDTO;
 import com.br.alchieri.consulting.mensageria.chat.dto.response.BotResponseDTO;
 import com.br.alchieri.consulting.mensageria.chat.dto.response.BotStepDTO;
@@ -65,6 +73,30 @@ public class BotManagementServiceImpl implements BotManagementService {
         return toBotDTO(savedBot);
     }
 
+    @Transactional
+    @Override
+    public BotResponseDTO updateBot(Long botId, UpdateBotRequest request, Company company) {
+        // Reutiliza o método findBot existente para garantir segurança por empresa
+        Bot bot = findBot(botId, company);
+
+        bot.setName(request.getName());
+        
+        if (request.getTriggerType() != null) {
+            bot.setTriggerType(request.getTriggerType());
+        }
+        
+        bot.setStartTime(request.getStartTime());
+        bot.setEndTime(request.getEndTime());
+        bot.setActiveDays(request.getActiveDays());
+        
+        if (request.getIsActive() != null) {
+            bot.setActive(request.getIsActive());
+        }
+
+        Bot savedBot = botRepository.save(bot);
+        return toBotDTO(savedBot);
+    }
+
     @Override
     public BotResponseDTO getBot(Long botId, Company company) {
         Bot bot = findBot(botId, company);
@@ -115,11 +147,12 @@ public class BotManagementServiceImpl implements BotManagementService {
     @Transactional
     @Override
     public void linkSteps(Long originStepId, Long targetStepId, String keyword, String label) {
+        
         BotStep origin = botStepRepository.findById(originStepId).orElseThrow();
         BotStep target = botStepRepository.findById(targetStepId).orElseThrow();
 
         BotOption option = new BotOption();
-        option.setOriginStep(origin);
+        option.setStep(origin);
         option.setTargetStep(target);
         option.setKeyword(keyword);
         option.setLabel(label);
@@ -133,6 +166,113 @@ public class BotManagementServiceImpl implements BotManagementService {
         BotStep step = botStepRepository.findById(stepId)
                 .orElseThrow(() -> new ResourceNotFoundException("Passo não encontrado"));
         return toStepDTO(step);
+    }
+
+    @Transactional
+    @Override
+    public void saveBotStructure(Long botId, BotStructureRequest request, Company company) {
+        Bot bot = findBot(botId, company);
+
+        // 1. Carregar passos existentes para identificar atualizações vs criações
+        List<BotStep> existingSteps = botStepRepository.findByBotId(botId);
+        Map<Long, BotStep> existingMap = existingSteps.stream()
+                .collect(Collectors.toMap(BotStep::getId, Function.identity()));
+
+        // Mapa para resolver conexões: TempID (Front) -> Entidade Persistida
+        Map<String, BotStep> tempIdToEntityMap = new HashMap<>();
+
+        // 2. Primeira Passada: Salvar/Atualizar os Passos (sem opções/conexões ainda)
+        List<BotStep> stepsToKeep = new ArrayList<>();
+
+        for (BotStepStructureDTO stepDto : request.getSteps()) {
+            BotStep stepEntity;
+
+            // É atualização?
+            if (stepDto.getId() != null && existingMap.containsKey(stepDto.getId())) {
+                stepEntity = existingMap.get(stepDto.getId());
+            } else {
+                // É criação
+                stepEntity = new BotStep();
+                stepEntity.setBot(bot);
+            }
+
+            // Atualiza dados básicos
+            stepEntity.setTitle(stepDto.getTitle());
+            stepEntity.setStepType(stepDto.getStepType());
+            stepEntity.setContent(stepDto.getContent());
+            stepEntity.setMetadata(stepDto.getMetadata());
+
+            // Salva para garantir ID (se for novo)
+            stepEntity = botStepRepository.save(stepEntity);
+            
+            stepsToKeep.add(stepEntity);
+            
+            // Registra no mapa de TempIDs
+            if (stepDto.getTempId() != null) {
+                tempIdToEntityMap.put(stepDto.getTempId(), stepEntity);
+            }
+            // Se tiver ID real, mapeia também (para facilitar lookup reverso se precisar)
+            tempIdToEntityMap.put(String.valueOf(stepEntity.getId()), stepEntity);
+        }
+
+        // 3. Segunda Passada: Construir as Opções e Conexões (Graph Links)
+        for (BotStepStructureDTO stepDto : request.getSteps()) {
+            BotStep parentStep = tempIdToEntityMap.get(stepDto.getTempId());
+            if (parentStep == null && stepDto.getId() != null) {
+                parentStep = tempIdToEntityMap.get(String.valueOf(stepDto.getId()));
+            }
+
+            if (parentStep == null) continue; // Should not happen
+
+            // Limpa opções antigas e recria (estratégia mais segura para grafos complexos)
+            // Se quiser preservar IDs de opções, a lógica seria mais complexa (merge).
+            // Aqui assumimos replace das opções para simplificar.
+            if (parentStep.getOptions() == null) {
+                parentStep.setOptions(new ArrayList<>());
+            }
+            parentStep.getOptions().clear();
+
+            if (stepDto.getOptions() != null) {
+                for (BotOptionStructureDTO optDto : stepDto.getOptions()) {
+                    BotOption option = new BotOption();
+                    option.setStep(parentStep);
+                    option.setKeyword(optDto.getKeyword());
+                    option.setLabel(optDto.getLabel());
+                    option.setSequence(optDto.getSequence());
+                    option.setHandoff(optDto.isHandoff());
+
+                    // Resolver Destino (Target)
+                    BotStep targetStep = null;
+                    if (optDto.getTargetStepTempId() != null) {
+                        targetStep = tempIdToEntityMap.get(optDto.getTargetStepTempId());
+                    } else if (optDto.getTargetStepId() != null) {
+                        // Tenta achar no mapa atual ou busca no banco (se for link para outro bot/externo)
+                        // Assumindo link interno:
+                        targetStep = tempIdToEntityMap.get(String.valueOf(optDto.getTargetStepId()));
+                    }
+
+                    option.setTargetStep(targetStep);
+                    parentStep.getOptions().add(option);
+                }
+            }
+            botStepRepository.save(parentStep); // Salva com as opções
+        }
+
+        // 4. Remover Passos Órfãos (que estavam no banco mas não vieram no JSON)
+        existingSteps.removeAll(stepsToKeep);
+        if (!existingSteps.isEmpty()) {
+            // Cuidado: validar se o root não está sendo deletado sem querer
+            botStepRepository.deleteAll(existingSteps);
+        }
+
+        // 5. Atualizar Root do Bot
+        if (request.getRootStepTempId() != null) {
+            BotStep newRoot = tempIdToEntityMap.get(request.getRootStepTempId());
+            if (newRoot != null) {
+                bot.setRootStep(newRoot);
+                botRepository.save(bot);
+            }
+        }
     }
 
     // --- MAPPERS ---

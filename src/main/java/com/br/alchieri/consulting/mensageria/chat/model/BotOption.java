@@ -1,6 +1,9 @@
 package com.br.alchieri.consulting.mensageria.chat.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -8,6 +11,8 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.ToString;
 
 @Entity
 @Table(name = "bot_options")
@@ -18,9 +23,13 @@ public class BotOption {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne
-    @JoinColumn(name = "origin_step_id")
-    private BotStep originStep;
+    // Isso gera o método setStep() que o serviço espera
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "step_id") // Nome da coluna no banco
+    @JsonIgnore // Evita loop JSON
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    private BotStep step;
 
     // O próximo passo se o usuário escolher esta opção
     @ManyToOne

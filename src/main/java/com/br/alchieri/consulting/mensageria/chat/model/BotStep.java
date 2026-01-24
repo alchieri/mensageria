@@ -1,8 +1,10 @@
 package com.br.alchieri.consulting.mensageria.chat.model;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import com.br.alchieri.consulting.mensageria.chat.model.enums.BotStepType;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
@@ -13,13 +15,23 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.NoArgsConstructor;
+import lombok.ToString;
 
 @Entity
 @Table(name = "bot_steps")
 @Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class BotStep {
 
     @Id
@@ -37,7 +49,16 @@ public class BotStep {
     @Column(columnDefinition = "TEXT")
     private String metadata; // JSON para config extra (ex: header de template, token de flow)
 
-    // As opções que saem deste passo (ex: Botões 1, 2, 3)
-    @OneToMany(mappedBy = "originStep", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    private List<BotOption> options;
+    @OneToMany(mappedBy = "step", cascade = CascadeType.ALL, orphanRemoval = true)
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    @Builder.Default
+    private List<BotOption> options = new ArrayList<>();
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "bot_id", nullable = false)
+    @JsonIgnore // Evita loop infinito no JSON
+    @ToString.Exclude // Evita StackOverflow no Lombok
+    @EqualsAndHashCode.Exclude
+    private Bot bot;
 }

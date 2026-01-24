@@ -1,6 +1,8 @@
 package com.br.alchieri.consulting.mensageria.chat.model;
 
 import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.List;
 
 import com.br.alchieri.consulting.mensageria.chat.model.enums.BotTriggerType;
 import com.br.alchieri.consulting.mensageria.model.Company;
@@ -15,9 +17,12 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.ToString;
 
 @Entity
 @Table(name = "bots")
@@ -40,7 +45,7 @@ public class Bot {
     // Regras de Ativação
     @Enumerated(EnumType.STRING)
     @Column(name = "trigger_type")
-    private BotTriggerType triggerType; // ALWAYS, OUT_OF_OFFICE_HOURS, KEYWORD
+    private BotTriggerType triggerType; 
 
     // Janela de Tempo (se triggerType for TIME_WINDOW)
     private LocalTime startTime;
@@ -50,7 +55,12 @@ public class Bot {
     private String activeDays; 
 
     // O primeiro passo do fluxo
-    @OneToOne(cascade = CascadeType.ALL)
+    @OneToOne
     @JoinColumn(name = "root_step_id")
     private BotStep rootStep;
+
+    @OneToMany(mappedBy = "bot", cascade = CascadeType.ALL, orphanRemoval = true)
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    private List<BotStep> steps = new ArrayList<>();
 }
