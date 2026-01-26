@@ -7,6 +7,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import com.br.alchieri.consulting.mensageria.model.Company;
+import com.br.alchieri.consulting.mensageria.model.MetaBusinessManager;
 
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
@@ -35,6 +36,10 @@ public class Catalog {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "company_id", nullable = false)
     private Company company;
+
+    @ManyToOne
+    @JoinColumn(name = "meta_business_manager_id")
+    private MetaBusinessManager businessManager;
 
     @Column(nullable = false)
     private String name;

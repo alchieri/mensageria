@@ -29,4 +29,11 @@ public interface CompanyService {
      * @return A entidade Company atualizada.
      */
     Company updateCompanyCallbacks(Company company, UpdateCallbacksRequest request);
+
+    /**
+     * Busca na Meta o Business ID associado à WABA da empresa e atualiza o cadastro local.
+     * @param companyId ID da empresa no sistema.
+     * @return A entidade Company atualizada.
+     */
+    Company syncMetaBusinessId(Long companyId);
 }

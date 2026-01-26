@@ -67,7 +67,6 @@ public class CompanyDetailsResponse {
                 .metaPrimaryPhoneNumberId(company.getMetaPrimaryPhoneNumberId())
                 .metaFlowPublicKeyId(company.getMetaFlowPublicKeyId())
                 .facebookBusinessManagerId(company.getFacebookBusinessManagerId())
-                .metaCatalogId(company.getMetaCatalogId())
                 .generalCallbackUrl(company.getGeneralCallbackUrl())
                 .templateStatusCallbackUrl(company.getTemplateStatusCallbackUrl())
                 .onboardingStatus(company.getOnboardingStatus())

@@ -112,11 +112,8 @@ public class Company {
     @Column(unique = true, nullable = true)
     private String metaFlowPublicKeyId;
 
-    @Column(name = "meta_catalog_id")
-    private String metaCatalogId; // ID do Catálogo no Gerenciador de Comércio
-
-    @Column(name = "meta_business_id")
-    private String metaBusinessId; // ID do Business Manager dono do catálogo
+    @OneToMany(mappedBy = "company", cascade = CascadeType.ALL)
+    private List<MetaBusinessManager> businessManagers = new ArrayList<>();
 
     @Column(nullable = false, updatable = false)
     @CreationTimestamp

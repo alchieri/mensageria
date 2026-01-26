@@ -10,7 +10,7 @@ import reactor.core.publisher.Mono;
 
 public interface MetaCatalogService {
 
-    Mono<Catalog> createCatalog(String catalogName, Company company);
+    Mono<Catalog> createCatalog(String catalogName, Long metaBusinessManagerId, Company company);
     Mono<Void> upsertProducts(List<ProductSyncRequest> products, Company company);
     Mono<Void> deleteProducts(List<String> skus, Company company);
 

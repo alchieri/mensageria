@@ -1,18 +1,22 @@
 package com.br.alchieri.consulting.mensageria.service.impl;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import org.springframework.web.reactive.function.client.WebClient;
 
+import com.br.alchieri.consulting.mensageria.catalog.dto.meta.MetaBusinessInfoDTO;
 import com.br.alchieri.consulting.mensageria.dto.request.CreateCompanyRequest;
 import com.br.alchieri.consulting.mensageria.dto.request.UpdateCallbacksRequest;
 import com.br.alchieri.consulting.mensageria.dto.request.UpdateCompanyRequest;
@@ -20,9 +24,11 @@ import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.exception.ResourceNotFoundException;
 import com.br.alchieri.consulting.mensageria.model.Address;
 import com.br.alchieri.consulting.mensageria.model.Company;
+import com.br.alchieri.consulting.mensageria.model.MetaBusinessManager;
 import com.br.alchieri.consulting.mensageria.model.User;
 import com.br.alchieri.consulting.mensageria.model.enums.Role;
 import com.br.alchieri.consulting.mensageria.repository.CompanyRepository;
+import com.br.alchieri.consulting.mensageria.repository.MetaBusinessManagerRepository;
 import com.br.alchieri.consulting.mensageria.repository.UserRepository;
 import com.br.alchieri.consulting.mensageria.service.CompanyService;
 
@@ -33,8 +39,18 @@ import lombok.RequiredArgsConstructor;
 public class CompanyServiceImpl implements CompanyService {
 
     private static final Logger log = LoggerFactory.getLogger(CompanyServiceImpl.class);
+
     private final CompanyRepository companyRepository;
+    private final MetaBusinessManagerRepository businessManagerRepository;
     private final UserRepository userRepository;
+
+    private final WebClient webClient = WebClient.create();
+
+    @Value("${whatsapp.graph-api.base-url}")
+    private String graphApiBaseUrl;
+
+    @Value("${whatsapp.api.token}")
+    private String bspSystemUserAccessToken;
 
     @Override
     @Transactional
@@ -275,6 +291,51 @@ public class CompanyServiceImpl implements CompanyService {
         } else {
             // Se nenhum campo foi fornecido para atualização, apenas retorna a entidade sem salvar
             return company;
+        }
+    }
+
+    @Override
+    @Transactional
+    public Company syncMetaBusinessId(Long companyId) {
+        Company company = companyRepository.findById(companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Empresa não encontrada"));
+
+        String url = graphApiBaseUrl + "/me?fields=businesses";
+
+        try {
+            MetaBusinessInfoDTO response = webClient.get()
+                    .uri(url + "&access_token=" + bspSystemUserAccessToken)
+                    .retrieve()
+                    .bodyToMono(MetaBusinessInfoDTO.class)
+                    .block();
+
+            if (response != null && response.getBusinesses() != null && response.getBusinesses().getData() != null) {
+                
+                List<MetaBusinessInfoDTO.MetaBusinessDetails> bmsFound = response.getBusinesses().getData();
+                log.info("Encontrados {} Business Managers para a empresa {}.", bmsFound.size(), company.getName());
+
+                for (MetaBusinessInfoDTO.MetaBusinessDetails bmDto : bmsFound) {
+                    // Verifica se já existe, senão cria
+                    MetaBusinessManager bm = businessManagerRepository
+                            .findByCompanyAndMetaBusinessId(company, bmDto.getId())
+                            .orElse(new MetaBusinessManager());
+
+                    bm.setCompany(company);
+                    bm.setMetaBusinessId(bmDto.getId());
+                    bm.setName(bmDto.getName());
+                    
+                    businessManagerRepository.save(bm);
+                }
+
+                // Retorna a empresa atualizada (pode precisar de refresh se quiser ver a lista na hora)
+                return company; 
+            } else {
+                throw new BusinessException("Nenhum Business Manager encontrado para este Token.");
+            }
+
+        } catch (Exception e) {
+            log.error("Erro ao sincronizar Business Managers: ", e);
+            throw new BusinessException("Falha na Meta API: " + e.getMessage());
         }
     }
 }

@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -65,5 +66,23 @@ public class CompanyConfigController {
         
         // Retorna os dados atualizados da empresa
         return ResponseEntity.ok(CompanyInfoResponse.fromEntity(updatedCompany));
+    }
+
+    @PostMapping("/sync-business-id")
+    @Operation(summary = "Sincronizar Meta Business ID", 
+               description = "Consulta a API da Meta usando o WABA ID configurado para encontrar e vincular automaticamente o ID do Gerenciador de Negócios.")
+    @ApiResponses(value = {
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Sincronização realizada com sucesso"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "WABA ID ausente ou erro na API da Meta")
+    })
+    public ResponseEntity<ApiResponse> syncBusinessId() {
+        User user = securityUtils.getAuthenticatedUser();
+        Company updatedCompany = companyService.syncMetaBusinessId(user.getCompany().getId());
+        
+        return ResponseEntity.ok(new ApiResponse(
+            true, 
+            "Business ID vinculado com sucesso: " + updatedCompany.getMetaBusinessId(), 
+            updatedCompany
+        ));
     }
 }

@@ -30,7 +30,8 @@ import com.br.alchieri.consulting.mensageria.catalog.service.MetaCatalogService;
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.exception.ResourceNotFoundException;
 import com.br.alchieri.consulting.mensageria.model.Company;
-import com.br.alchieri.consulting.mensageria.repository.CompanyRepository;
+import com.br.alchieri.consulting.mensageria.model.MetaBusinessManager;
+import com.br.alchieri.consulting.mensageria.repository.MetaBusinessManagerRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import lombok.RequiredArgsConstructor;
@@ -47,7 +48,7 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
 
     private final CatalogRepository catalogRepository;
     private final ProductRepository productRepository;
-    private final CompanyRepository companyRepository;
+    private final MetaBusinessManagerRepository businessManagerRepository;
 
     @Value("${whatsapp.graph-api.base-url}")
     private String graphApiBaseUrl;
@@ -57,12 +58,19 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
 
     @Override
     @Transactional
-    public Mono<Catalog> createCatalog(String catalogName, Company company) {
-        if (company.getMetaBusinessId() == null || company.getMetaBusinessId().isBlank()) {
-            return Mono.error(new BusinessException("Empresa não possui Business ID configurado para criar catálogos."));
+    public Mono<Catalog> createCatalog(String catalogName, Long metaBusinessManagerId, Company company) {
+        
+        // 1. Busca o BM específico
+        MetaBusinessManager bm = businessManagerRepository.findById(metaBusinessManagerId)
+                .orElseThrow(() -> new BusinessException("Business Manager não encontrado."));
+
+        if (!bm.getCompany().getId().equals(company.getId())) {
+            return Mono.error(new BusinessException("Este Business Manager não pertence à sua empresa."));
         }
 
-        String endpoint = graphApiBaseUrl + "/" + company.getMetaBusinessId() + "/owned_product_catalogs";
+        // URL: /{business_id}/owned_product_catalogs
+        String endpoint = graphApiBaseUrl + "/" + bm.getMetaBusinessId() + "/owned_product_catalogs";
+        
         Map<String, String> body = new HashMap<>();
         body.put("name", catalogName);
 
@@ -77,23 +85,19 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
                 .map(response -> {
                     String metaId = response.get("id").asText();
                     
-                    // Salvar no Banco Local
                     Catalog catalog = new Catalog();
                     catalog.setName(catalogName);
                     catalog.setCompany(company);
+                    catalog.setBusinessManager(bm); // Vincula ao BM
                     catalog.setMetaCatalogId(metaId);
                     
-                    // Se não houver padrão, marca este como padrão
                     if (catalogRepository.findByCompanyAndIsDefaultTrue(company).isEmpty()) {
                         catalog.setDefault(true);
-                        // Atualiza a referencia rápida na Company também (opcional, mantendo compatibilidade)
-                        company.setMetaCatalogId(metaId);
-                        companyRepository.save(company);
                     }
                     
                     return catalogRepository.save(catalog);
                 })
-                .doOnSuccess(c -> logger.info("Catálogo '{}' criado com ID Meta {}", c.getName(), c.getMetaCatalogId()));
+                .doOnSuccess(c -> logger.info("Catálogo '{}' criado no BM {} (Meta ID: {})", c.getName(), bm.getName(), c.getMetaCatalogId()));
     }
 
     @Override
@@ -172,46 +176,58 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
     @Transactional
     public void syncCatalogsFromMeta(Company company) {
         
-        String businessId = company.getFacebookBusinessManagerId();
+        // 1. Buscar todos os BMs da empresa
+        List<MetaBusinessManager> bms = businessManagerRepository.findByCompany(company);
 
-        if (businessId == null || businessId.isBlank()) {
-            throw new BusinessException("ID do Business Manager não configurado para a empresa.");
+        if (bms.isEmpty()) {
+            throw new BusinessException("Nenhum Business ID vinculado. Execute a sincronização de empresa primeiro.");
         }
 
-        String url = graphApiBaseUrl + "/" + businessId + "/owned_product_catalogs";
+        int totalSynced = 0;
 
-        try {
-            MetaSyncDTOs.MetaCatalogListResponse response = webClient.get()
-                    .uri(url + "?access_token=" + systemAccessToken)
-                    .retrieve()
-                    .bodyToMono(MetaSyncDTOs.MetaCatalogListResponse.class)
-                    .block();
+        // 2. Iterar sobre cada BM para buscar seus catálogos
+        for (MetaBusinessManager bm : bms) {
+            logger.info("Sincronizando catálogos do Business: {} ({})", bm.getName(), bm.getMetaBusinessId());
+            
+            String url = graphApiBaseUrl + "/" + bm.getMetaBusinessId() + "/owned_product_catalogs";
 
-            if (response != null && response.getData() != null) {
-                for (MetaSyncDTOs.MetaCatalogData metaCat : response.getData()) {
-                    // Verifica se já existe localmente pelo ID da Meta
-                    Optional<Catalog> existing = catalogRepository.findByMetaCatalogId(metaCat.getId());
-                    
-                    Catalog catalog;
-                    if (existing.isPresent()) {
-                        catalog = existing.get();
-                        catalog.setName(metaCat.getName()); // Atualiza nome se mudou
-                    } else {
-                        catalog = new Catalog();
-                        catalog.setCompany(company);
-                        catalog.setMetaCatalogId(metaCat.getId());
-                        catalog.setName(metaCat.getName());
-                        catalog.setDefault(false); // Default logic to check
+            try {
+                MetaSyncDTOs.MetaCatalogListResponse response = webClient.get()
+                        .uri(url + "?access_token=" + systemAccessToken)
+                        .retrieve()
+                        .bodyToMono(MetaSyncDTOs.MetaCatalogListResponse.class)
+                        .block();
+
+                if (response != null && response.getData() != null) {
+                    for (MetaSyncDTOs.MetaCatalogData metaCat : response.getData()) {
+                        
+                        Optional<Catalog> existing = catalogRepository.findByMetaCatalogId(metaCat.getId());
+                        
+                        Catalog catalog;
+                        if (existing.isPresent()) {
+                            catalog = existing.get();
+                            catalog.setName(metaCat.getName());
+                        } else {
+                            catalog = new Catalog();
+                            catalog.setBusinessManager(bm);
+                            catalog.setMetaCatalogId(metaCat.getId());
+                            catalog.setName(metaCat.getName());
+                            catalog.setDefault(false);
+                        }
+                        
+                        // VINCULA AO BM CORRETO
+                        catalog.setBusinessManager(bm);
+                        
+                        catalogRepository.save(catalog);
+                        totalSynced++;
                     }
-                    catalogRepository.save(catalog);
                 }
-                logger.info("Sincronização de catálogos concluída. Total: {}", response.getData().size());
+            } catch (Exception e) {
+                logger.error("Erro ao buscar catálogos do BM {}: {}", bm.getMetaBusinessId(), e.getMessage());
+                // Continua para o próximo BM mesmo se um falhar
             }
-
-        } catch (Exception e) {
-            logger.error("Erro ao buscar catálogos da Meta: ", e);
-            throw new BusinessException("Falha ao sincronizar catálogos: " + e.getMessage());
         }
+        logger.info("Sincronização concluída. Total de catálogos: {}", totalSynced);
     }
 
     @Override
@@ -224,117 +240,60 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
             throw new BusinessException("Acesso negado ao catálogo.");
         }
         
+        // Validação extra: O catálogo tem um ID da Meta?
         if (catalog.getMetaCatalogId() == null) {
-            throw new BusinessException("Este catálogo não possui vínculo com a Meta (ID externo ausente).");
+            throw new BusinessException("Catálogo não vinculado à Meta.");
         }
 
         String url = graphApiBaseUrl + "/" + catalog.getMetaCatalogId() + "/products";
-        // Campos que queremos buscar
-        String fields = "id,retailer_id,name,description,price,image_url,availability";
+        String fields = "id,retailer_id,name,description,price,image_url,availability,currency";
 
-        // Monta a URL inicial
-        String currentUrl = String.format("%s?access_token=%s&fields=%s&limit=100", url, systemAccessToken, fields);
-
-        logger.info("Iniciando sincronização de produtos para o catálogo: {}", catalog.getName());
-
-        int pageCount = 0;
-        int totalProductsSynced = 0;
-        boolean hasNext = true;
-
-        while (hasNext) {
-            try {
-                // Como a URL next vem completa da Meta, passamos direto no uri()
-                // Na primeira iteração, usamos a URL montada manualmente.
-                String urlToCall = currentUrl; 
-
-                MetaSyncDTOs.MetaProductListResponse response = webClient.get()
-                        .uri(urlToCall)
-                        .retrieve()
-                        .bodyToMono(MetaSyncDTOs.MetaProductListResponse.class)
-                        .block();
-
-                if (response != null && response.getData() != null && !response.getData().isEmpty()) {
-                    // Processa o lote atual
-                    processProductBatch(catalog, response.getData());
-                    
-                    totalProductsSynced += response.getData().size();
-                    pageCount++;
-                    logger.debug("Página {} processada. Produtos acumulados: {}", pageCount, totalProductsSynced);
-
-                    // Verifica se existe próxima página
-                    if (response.getPaging() != null && response.getPaging().getNext() != null) {
-                        currentUrl = response.getPaging().getNext();
-                    } else {
-                        hasNext = false;
+        // Paginação simplificada (pode evoluir para loop reactivo com expand())
+        webClientBuilder.build().get()
+                .uri(uriBuilder -> uriBuilder
+                    .path(url) // Se url for completa, use .uri(url)
+                    .queryParam("access_token", systemAccessToken)
+                    .queryParam("fields", fields)
+                    .queryParam("limit", 100)
+                    .build())
+                .retrieve()
+                .bodyToMono(MetaSyncDTOs.MetaProductListResponse.class)
+                .subscribe(response -> {
+                    if (response.getData() != null) {
+                        processProductBatchSync(catalog, response.getData());
                     }
-                } else {
-                    hasNext = false; // Nenhum dado retornado, encerra loop
-                }
-
-                // Safety Break: Evitar loops infinitos em caso de erro da API
-                if (pageCount > 500) { // Limite arbitrário de 50k produtos (500 * 100)
-                    logger.warn("Limite de segurança de páginas atingido (500). Interrompendo sincronização.");
-                    break;
-                }
-
-            } catch (Exception e) {
-                logger.error("Erro ao buscar página de produtos da Meta na iteração {}: {}", pageCount, e.getMessage());
-                // Decide se aborta tudo ou tenta continuar (aqui optamos por abortar para garantir integridade)
-                throw new BusinessException("Falha na sincronização paginada: " + e.getMessage());
-            }
-        }
-
-        logger.info("Sincronização concluída. Total de produtos processados: {}", totalProductsSynced);
+                }, error -> logger.error("Erro ao sincronizar produtos: ", error));
     }
 
-    /**
-     * Método auxiliar para processar e salvar/atualizar a lista de produtos.
-     */
-    private void processProductBatch(Catalog catalog, List<MetaSyncDTOs.MetaProductData> metaProducts) {
-        
+    private void processProductBatchSync(Catalog catalog, List<MetaSyncDTOs.MetaProductData> metaProducts) {
         for (MetaSyncDTOs.MetaProductData metaProd : metaProducts) {
-            // Validação básica: Produto precisa de SKU (retailer_id)
-            if (metaProd.getRetailerId() == null) {
-                continue; 
-            }
+            if (metaProd.getRetailerId() == null) continue;
 
-            Optional<Product> existing = productRepository.findByCatalogAndSku(catalog, metaProd.getRetailerId());
+            Product product = productRepository.findByCatalogAndSku(catalog, metaProd.getRetailerId())
+                    .orElse(new Product());
 
-            Product product;
-            if (existing.isPresent()) {
-                product = existing.get();
-            } else {
-                product = new Product();
-                product.setCatalog(catalog);
-                product.setSku(metaProd.getRetailerId());
-            }
-
-            // product.setFacebookProductId(metaProd.getId());
+            product.setCatalog(catalog);
+            product.setSku(metaProd.getRetailerId());
             product.setName(metaProd.getName());
-            product.setCurrency(metaProd.getCurrency());
-            // Limita descrição se necessário para caber no banco
-            String desc = metaProd.getDescription();
-            if (desc != null && desc.length() > 1000) desc = desc.substring(0, 1000);
-            product.setDescription(desc);
-            
+            product.setDescription(metaProd.getDescription());
             product.setImageUrl(metaProd.getImageUrl());
             product.setInStock("in stock".equalsIgnoreCase(metaProd.getAvailability()));
-            product.setPrice(parsePrice(metaProd.getPrice()));
+            
+            // Tratamento de preço
+            try {
+                if (metaProd.getPrice() != null) {
+                    // Meta manda "100 BRL" ou numérico
+                    String p = metaProd.getPrice().replaceAll("[^0-9.]", "");
+                    product.setPrice(new BigDecimal(p));
+                }
+                product.setCurrency(metaProd.getCurrency());
+            } catch (Exception e) {
+                logger.warn("Erro ao parsear preço do produto {}: {}", metaProd.getRetailerId(), e.getMessage());
+            }
 
             productRepository.save(product);
         }
-    }
-
-    // Helper para extrair numérico de strings como "100.50 BRL"
-    private BigDecimal parsePrice(String priceStr) {
-        if (priceStr == null) return BigDecimal.ZERO;
-        try {
-            // Remove tudo que não é numero ou ponto
-            String clean = priceStr.replaceAll("[^0-9.]", "");
-            return new BigDecimal(clean);
-        } catch (Exception e) {
-            return BigDecimal.ZERO;
-        }
+        logger.info("Lote de produtos sincronizado para o catálogo {}", catalog.getId());
     }
 
     private Mono<Void> sendBatchRequest(String catalogId, List<BatchItem> items) {
