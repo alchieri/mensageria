@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.br.alchieri.consulting.mensageria.catalog.dto.request.CreateCatalogRequest;
 import com.br.alchieri.consulting.mensageria.catalog.dto.request.ProductSyncRequest;
 import com.br.alchieri.consulting.mensageria.catalog.model.Catalog;
 import com.br.alchieri.consulting.mensageria.catalog.service.MetaCatalogService;
@@ -37,18 +38,18 @@ public class CatalogController {
 
     @PostMapping
     @Operation(summary = "Criar Catálogo", description = "Cria um novo catálogo na Meta e vincula à empresa.")
-    public ResponseEntity<ApiResponse> createCatalog(@RequestBody Map<String, String> payload) {
-        User currentUser = securityUtils.getAuthenticatedUser();
-        Company company = currentUser.getCompany();
+    public ResponseEntity<ApiResponse> createCatalog(@Valid @RequestBody CreateCatalogRequest request) {
         
-        String name = payload.get("name");
-        if (name == null || name.isBlank()) {
-            return ResponseEntity.badRequest().body(new ApiResponse(false, "Nome do catálogo é obrigatório.", null));
-        }
+        User currentUser = securityUtils.getAuthenticatedUser();
 
-        Catalog createdCatalog = metaCatalogService.createCatalog(name, company).block();
+        // O serviço retorna Mono<Catalog>, usamos .block() para manter o controller síncrono
+        Catalog catalog = metaCatalogService.createCatalog(
+                request.getName(), 
+                request.getMetaBusinessManagerId(), 
+                currentUser.getCompany()
+        ).block();
 
-        return ResponseEntity.ok(new ApiResponse(true, "Catálogo criado com sucesso.", createdCatalog));
+        return ResponseEntity.ok(new ApiResponse(true, "Catálogo criado com sucesso na Meta.", catalog));
     }
 
     @PostMapping("/products")

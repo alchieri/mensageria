@@ -25,6 +25,9 @@ public class OutgoingMessageRequest implements Serializable {
     private SendTemplateMessageRequest templateRequest;
     private SendInteractiveFlowMessageRequest interactiveFlowRequest;
 
+    private SendProductMessageRequest productRequest;
+    private SendMultiProductMessageRequest multiProductRequest;
+
     // Adicionar outros tipos se necessário
     private Long scheduledMessageId;
 }

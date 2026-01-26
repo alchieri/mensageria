@@ -77,12 +77,15 @@ public class CompanyConfigController {
     })
     public ResponseEntity<ApiResponse> syncBusinessId() {
         User user = securityUtils.getAuthenticatedUser();
+        
         Company updatedCompany = companyService.syncMetaBusinessId(user.getCompany().getId());
+        
+        int bmCount = (updatedCompany.getBusinessManagers() != null) ? updatedCompany.getBusinessManagers().size() : 0;
         
         return ResponseEntity.ok(new ApiResponse(
             true, 
-            "Business ID vinculado com sucesso: " + updatedCompany.getMetaBusinessId(), 
-            updatedCompany
+            "Sincronização realizada com sucesso. " + bmCount + " Business Managers encontrados e vinculados.", 
+            updatedCompany // O JSON de retorno incluirá a lista "businessManagers"
         ));
     }
 }

@@ -29,6 +29,8 @@ import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
+import com.br.alchieri.consulting.mensageria.catalog.model.Catalog;
+import com.br.alchieri.consulting.mensageria.catalog.repository.CatalogRepository;
 import com.br.alchieri.consulting.mensageria.chat.dto.meta.InteractivePayload;
 import com.br.alchieri.consulting.mensageria.chat.dto.meta.WhatsAppCloudApiRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.meta.WhatsAppCloudApiRequest.MediaPayload;
@@ -86,6 +88,7 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
     private final MediaUploadRepository mediaUploadRepository;
     private final S3Template s3Template;
     private final FlowRepository flowRepository;
+    private final CatalogRepository catalogRepository;
 
     // URL base global, o token será específico do cliente
     @Value("${whatsapp.graph-api.base-url}")
@@ -106,26 +109,95 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
             return Mono.error(new BusinessException("Limite de envio de mensagens excedido."));
         }
 
-        Mono<WhatsAppCloudApiRequest> metaRequestMono;
-        String messageType = queueRequest.getMessageType();
-        String contentReference;
+        switch (queueRequest.getMessageType()) {
+            case "TEXT":
+                if (queueRequest.getTextRequest() != null) {
+                    return sendTextMessage(queueRequest.getTextRequest(), user);
+                }
+                break;
 
-        if ("TEXT".equals(messageType)) {
-            metaRequestMono = Mono.just(buildTextMetaRequest(queueRequest.getTextRequest()));
-            contentReference = queueRequest.getTextRequest().getMessage();
-        } else if ("TEMPLATE".equals(messageType)) {
-            metaRequestMono = buildTemplateMetaRequest(queueRequest.getTemplateRequest(), company, user);
-            contentReference = queueRequest.getTemplateRequest().getTemplateName();
-        } else if ("INTERACTIVE_FLOW".equals(messageType)) {
-            metaRequestMono = buildInteractiveFlowMetaRequest(queueRequest.getInteractiveFlowRequest());
-            contentReference = queueRequest.getInteractiveFlowRequest().getFlowName(); // Usa o nome amigável para o log
-        } else {
-            return Mono.error(new BusinessException("Tipo de mensagem desconhecido na fila: " + messageType));
+            case "TEMPLATE":
+                if (queueRequest.getTemplateRequest() != null) {
+                    // Nota: Se sendTemplateMessage espera retorno Mono<Void>, chame-o.
+                    // Se ele foi implementado como "fire and forget" no controller, aqui no consumer
+                    // precisamos chamar a lógica de construção e envio.
+                    // Assumindo que você tem um método interno ou usa o público:
+                    return sendTemplateMessage(queueRequest.getTemplateRequest(), user, null);
+                }
+                break;
+                
+            case "INTERACTIVE_FLOW":
+                if (queueRequest.getInteractiveFlowRequest() != null) {
+                    return sendInteractiveFlowMessage(queueRequest.getInteractiveFlowRequest(), user);
+                }
+                break;
+
+            // --- NOVOS CASOS DE PRODUTO ---
+            
+            case "PRODUCT":
+            case "INTERACTIVE_PRODUCT":
+                if (queueRequest.getProductRequest() == null) {
+                    return Mono.error(new BusinessException("Payload de produto vazio na fila."));
+                }
+                // Usa Mono.fromCallable para executar a busca do catálogo (bloqueante) em outra thread
+                return Mono.fromCallable(() -> buildSingleProductMetaRequest(queueRequest.getProductRequest(), company))
+                        .subscribeOn(Schedulers.boundedElastic())
+                        .flatMap(metaRequest -> 
+                            executeSendMessage(
+                                metaRequest, 
+                                user, 
+                                company, 
+                                "PRODUCT", 
+                                "Produto SKU: " + queueRequest.getProductRequest().getProductRetailerId(), 
+                                null // Scheduled ID se houver
+                            )
+                        );
+
+            case "MULTI_PRODUCT":
+            case "PRODUCT_LIST":
+                if (queueRequest.getMultiProductRequest() == null) {
+                    return Mono.error(new BusinessException("Payload de lista de produtos vazio na fila."));
+                }
+                return Mono.fromCallable(() -> buildMultiProductMetaRequest(queueRequest.getMultiProductRequest(), company))
+                        .subscribeOn(Schedulers.boundedElastic())
+                        .flatMap(metaRequest -> 
+                            executeSendMessage(
+                                metaRequest, 
+                                user, 
+                                company, 
+                                "PRODUCT_LIST", 
+                                "Lista: " + queueRequest.getMultiProductRequest().getHeaderText(), 
+                                null
+                            )
+                        );
+
+            default:
+                logger.warn("Tipo de mensagem desconhecido na fila: {}", queueRequest.getMessageType());
+                return Mono.error(new BusinessException("Tipo de mensagem não suportado: " + queueRequest.getMessageType()));
         }
 
-        return metaRequestMono.flatMap(metaRequest ->
-            executeSendMessage(metaRequest, user, company, messageType, contentReference, queueRequest.getScheduledMessageId())
-        );
+        return Mono.empty();
+
+        // Mono<WhatsAppCloudApiRequest> metaRequestMono;
+        // String messageType = queueRequest.getMessageType();
+        // String contentReference;
+
+        // if ("TEXT".equals(messageType)) {
+        //     metaRequestMono = Mono.just(buildTextMetaRequest(queueRequest.getTextRequest()));
+        //     contentReference = queueRequest.getTextRequest().getMessage();
+        // } else if ("TEMPLATE".equals(messageType)) {
+        //     metaRequestMono = buildTemplateMetaRequest(queueRequest.getTemplateRequest(), company, user);
+        //     contentReference = queueRequest.getTemplateRequest().getTemplateName();
+        // } else if ("INTERACTIVE_FLOW".equals(messageType)) {
+        //     metaRequestMono = buildInteractiveFlowMetaRequest(queueRequest.getInteractiveFlowRequest());
+        //     contentReference = queueRequest.getInteractiveFlowRequest().getFlowName(); // Usa o nome amigável para o log
+        // } else {
+        //     return Mono.error(new BusinessException("Tipo de mensagem desconhecido na fila: " + messageType));
+        // }
+
+        // return metaRequestMono.flatMap(metaRequest ->
+        //     executeSendMessage(metaRequest, user, company, messageType, contentReference, queueRequest.getScheduledMessageId())
+        // );
     }
 
     @Override
@@ -732,13 +804,10 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
     }
 
     private WhatsAppCloudApiRequest buildSingleProductMetaRequest(SendProductMessageRequest request, Company company) {
-        // Usa o catálogo da request ou o padrão da empresa
-        String catalogId = request.getCatalogId() != null ? request.getCatalogId() : company.getMetaCatalogId();
         
-        if (catalogId == null || catalogId.isBlank()) {
-            throw new BusinessException("Catalog ID não configurado para a empresa. Configure no cadastro da empresa ou envie na requisição.");
-        }
-
+        // Nova lógica de resolução de catálogo
+        String catalogId = resolveCatalogId(request.getCatalogId(), company);
+        
         // Action: Define qual produto mostrar
         InteractivePayload.Action action = InteractivePayload.Action.builder()
                 .catalogId(catalogId)
@@ -770,11 +839,9 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
     }
 
     private WhatsAppCloudApiRequest buildMultiProductMetaRequest(SendMultiProductMessageRequest request, Company company) {
-        String catalogId = request.getCatalogId() != null ? request.getCatalogId() : company.getMetaCatalogId();
-
-        if (catalogId == null || catalogId.isBlank()) {
-            throw new BusinessException("Catalog ID não configurado para a empresa.");
-        }
+        
+        // Nova lógica de resolução de catálogo
+        String catalogId = resolveCatalogId(request.getCatalogId(), company);
 
         // Converte as seções do seu DTO para as seções da Meta
         List<InteractivePayload.Section> metaSections = request.getSections().stream()
@@ -872,5 +939,25 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
         }
 
         return mediaBuilder.build();
+    }
+
+    /**
+     * Helper centralizado para resolver o ID do Catálogo.
+     * Prioridade:
+     * 1. ID passado explicitamente na requisição.
+     * 2. Catálogo marcado como 'default' no banco de dados para esta empresa.
+     */
+    private String resolveCatalogId(String requestCatalogId, Company company) {
+        
+        if (requestCatalogId != null && !requestCatalogId.isBlank()) {
+            return requestCatalogId;
+        }
+
+        // Busca o catálogo default no banco
+        // O método findByCompanyAndIsDefaultTrue retorna List ou Optional, assumindo List para pegar o primeiro
+        return catalogRepository.findByCompanyAndIsDefaultTrue(company).stream()
+                .findFirst()
+                .map(Catalog::getMetaCatalogId)
+                .orElseThrow(() -> new BusinessException("Catálogo ID não informado e nenhum catálogo padrão encontrado para a empresa."));
     }
 }
