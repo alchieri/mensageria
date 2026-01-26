@@ -21,7 +21,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 @RestController
-@RequestMapping("/api/v1/webhooks/catalog")
+@RequestMapping("/api/v1/webhook/catalog")
 @RequiredArgsConstructor
 @Slf4j
 public class CatalogWebhookController {

@@ -19,7 +19,6 @@ public interface MediaUploadRepository extends JpaRepository<MediaUpload, Long> 
     // Busca paginada de TODAS as mídias (para admins)
     Page<MediaUpload> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
-    Optional<MediaUpload> findById(String contentId);
-
-    
+    // Busca mídia por metaMediaId
+    Optional<MediaUpload> findByMetaMediaId(String metaMediaId);
 }

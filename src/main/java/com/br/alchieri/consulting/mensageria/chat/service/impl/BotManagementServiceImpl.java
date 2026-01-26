@@ -398,7 +398,7 @@ public class BotManagementServiceImpl implements BotManagementService {
                 }
                 // Assume que o Front já fez upload via /api/v1/media e mandou o UUID ou ID
                 // Se sua MediaUpload usa String UUID:
-                MediaUpload media = mediaRepository.findById(contentId)
+                MediaUpload media = mediaRepository.findByMetaMediaId(contentId)
                         .orElseThrow(() -> new ResourceNotFoundException("Mídia ID " + contentId + " não encontrada."));
                 
                 // Se sua MediaUpload usa Long ID:
