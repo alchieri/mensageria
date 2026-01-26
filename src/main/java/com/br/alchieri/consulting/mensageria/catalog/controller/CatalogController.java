@@ -1,7 +1,6 @@
 package com.br.alchieri.consulting.mensageria.catalog.controller;
 
 import java.util.List;
-import java.util.Map;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -12,8 +11,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.br.alchieri.consulting.mensageria.catalog.dto.request.CreateCatalogRequest;
+import com.br.alchieri.consulting.mensageria.catalog.dto.request.CreateProductSetRequest;
 import com.br.alchieri.consulting.mensageria.catalog.dto.request.ProductSyncRequest;
 import com.br.alchieri.consulting.mensageria.catalog.model.Catalog;
+import com.br.alchieri.consulting.mensageria.catalog.model.ProductSet;
 import com.br.alchieri.consulting.mensageria.catalog.service.MetaCatalogService;
 import com.br.alchieri.consulting.mensageria.dto.response.ApiResponse;
 import com.br.alchieri.consulting.mensageria.model.Company;
@@ -42,9 +43,9 @@ public class CatalogController {
         
         User currentUser = securityUtils.getAuthenticatedUser();
 
-        // O serviço retorna Mono<Catalog>, usamos .block() para manter o controller síncrono
         Catalog catalog = metaCatalogService.createCatalog(
                 request.getName(), 
+                request.getVertical(),
                 request.getMetaBusinessManagerId(), 
                 currentUser.getCompany()
         ).block();
@@ -92,5 +93,23 @@ public class CatalogController {
         User user = securityUtils.getAuthenticatedUser();
         metaCatalogService.syncProductsFromMeta(catalogId, user.getCompany());
         return ResponseEntity.ok(new ApiResponse(true, "Sincronização de produtos iniciada.", null));
+    }
+
+    @PostMapping("/{catalogId}/product-sets")
+    @Operation(summary = "Criar Product Set", description = "Cria um subconjunto de produtos dentro de um catálogo para uso em mensagens de lista.")
+    public ResponseEntity<ApiResponse> createProductSet(
+            @PathVariable Long catalogId,
+            @Valid @RequestBody CreateProductSetRequest request) {
+        
+        User user = securityUtils.getAuthenticatedUser();
+        
+        ProductSet productSet = metaCatalogService.createProductSet(
+                catalogId,
+                request.getName(),
+                request.getProductRetailerIds(),
+                user.getCompany()
+        ).block(); // Block para manter síncrono no controller
+
+        return ResponseEntity.ok(new ApiResponse(true, "Product Set criado com sucesso.", productSet));
     }
 }

@@ -24,15 +24,19 @@ import com.br.alchieri.consulting.mensageria.catalog.dto.meta.ProductAttributes;
 import com.br.alchieri.consulting.mensageria.catalog.dto.request.ProductSyncRequest;
 import com.br.alchieri.consulting.mensageria.catalog.model.Catalog;
 import com.br.alchieri.consulting.mensageria.catalog.model.Product;
+import com.br.alchieri.consulting.mensageria.catalog.model.ProductSet;
 import com.br.alchieri.consulting.mensageria.catalog.repository.CatalogRepository;
 import com.br.alchieri.consulting.mensageria.catalog.repository.ProductRepository;
+import com.br.alchieri.consulting.mensageria.catalog.repository.ProductSetRepository;
 import com.br.alchieri.consulting.mensageria.catalog.service.MetaCatalogService;
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.exception.ResourceNotFoundException;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.MetaBusinessManager;
 import com.br.alchieri.consulting.mensageria.repository.MetaBusinessManagerRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.RequiredArgsConstructor;
 import reactor.core.publisher.Mono;
@@ -44,11 +48,13 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
     private static final Logger logger = LoggerFactory.getLogger(MetaCatalogServiceImpl.class);
     
     private final WebClient.Builder webClientBuilder;
-    private final WebClient webClient = WebClient.create();
 
     private final CatalogRepository catalogRepository;
     private final ProductRepository productRepository;
     private final MetaBusinessManagerRepository businessManagerRepository;
+    private final ProductSetRepository productSetRepository;
+
+    private final ObjectMapper objectMapper;
 
     @Value("${whatsapp.graph-api.base-url}")
     private String graphApiBaseUrl;
@@ -58,7 +64,7 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
 
     @Override
     @Transactional
-    public Mono<Catalog> createCatalog(String catalogName, Long metaBusinessManagerId, Company company) {
+    public Mono<Catalog> createCatalog(String catalogName, String vertical, Long metaBusinessManagerId, Company company) {
         
         // 1. Busca o BM específico
         MetaBusinessManager bm = businessManagerRepository.findById(metaBusinessManagerId)
@@ -68,11 +74,16 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
             return Mono.error(new BusinessException("Este Business Manager não pertence à sua empresa."));
         }
 
-        // URL: /{business_id}/owned_product_catalogs
+        // 2. Prepara a chamada para a Meta API
+        // Endpoint: POST /{business_id}/owned_product_catalogs
         String endpoint = graphApiBaseUrl + "/" + bm.getMetaBusinessId() + "/owned_product_catalogs";
+
+        // Se o vertical não for informado, usa "commerce" como padrão seguro
+        String finalVertical = (vertical != null && !vertical.isBlank()) ? vertical : "commerce";
         
         Map<String, String> body = new HashMap<>();
         body.put("name", catalogName);
+        body.put("vertical", finalVertical);
 
         return webClientBuilder.build()
                 .post()
@@ -82,22 +93,30 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
                 .body(BodyInserters.fromValue(body))
                 .retrieve()
                 .bodyToMono(JsonNode.class)
-                .map(response -> {
-                    String metaId = response.get("id").asText();
+                .flatMap(response -> {
+                    String metaCatalogId = response.get("id").asText();
                     
                     Catalog catalog = new Catalog();
                     catalog.setName(catalogName);
+                    catalog.setVertical(finalVertical);
                     catalog.setCompany(company);
-                    catalog.setBusinessManager(bm); // Vincula ao BM
-                    catalog.setMetaCatalogId(metaId);
+                    catalog.setBusinessManager(bm); 
+                    catalog.setMetaCatalogId(metaCatalogId);
                     
                     if (catalogRepository.findByCompanyAndIsDefaultTrue(company).isEmpty()) {
                         catalog.setDefault(true);
                     }
                     
-                    return catalogRepository.save(catalog);
+                    Catalog savedCatalog = catalogRepository.save(catalog);
+
+                    // --- VINCULAR AO WABA E AO NÚMERO ---
+                    // Encadeia as chamadas de vínculo
+                    return connectCatalogToWaba(company, metaCatalogId)
+                            .then(connectCatalogToPhoneNumber(company, metaCatalogId))
+                            .thenReturn(savedCatalog);
                 })
-                .doOnSuccess(c -> logger.info("Catálogo '{}' criado no BM {} (Meta ID: {})", c.getName(), bm.getName(), c.getMetaCatalogId()));
+                .doOnSuccess(c -> logger.info("Catálogo criado e vinculado: {} (Meta ID: {})", c.getName(), c.getMetaCatalogId()))
+                .doOnError(e -> logger.error("Erro no fluxo de criação de catálogo: {}", e.getMessage()));
     }
 
     @Override
@@ -192,7 +211,7 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
             String url = graphApiBaseUrl + "/" + bm.getMetaBusinessId() + "/owned_product_catalogs";
 
             try {
-                MetaSyncDTOs.MetaCatalogListResponse response = webClient.get()
+                MetaSyncDTOs.MetaCatalogListResponse response = webClientBuilder.build().get()
                         .uri(url + "?access_token=" + systemAccessToken)
                         .retrieve()
                         .bodyToMono(MetaSyncDTOs.MetaCatalogListResponse.class)
@@ -219,6 +238,14 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
                         catalog.setBusinessManager(bm);
                         
                         catalogRepository.save(catalog);
+
+                        try {
+                            connectCatalogToWaba(company, catalog.getMetaCatalogId()).block();
+                            connectCatalogToPhoneNumber(company, catalog.getMetaCatalogId()).block();
+                        } catch (Exception e) {
+                            logger.warn("Não foi possível vincular automaticamente o catálogo {} durante o sync: {}", catalog.getName(), e.getMessage());
+                        }
+
                         totalSynced++;
                     }
                 }
@@ -263,6 +290,129 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
                         processProductBatchSync(catalog, response.getData());
                     }
                 }, error -> logger.error("Erro ao sincronizar produtos: ", error));
+    }
+
+    @Override
+    @Transactional
+    public Mono<ProductSet> createProductSet(Long catalogId, String name, List<String> retailerIds, Company company) {
+        
+        // 1. Validar Catálogo
+        Catalog catalog = catalogRepository.findById(catalogId)
+                .orElseThrow(() -> new ResourceNotFoundException("Catálogo não encontrado."));
+
+        if (!catalog.getCompany().getId().equals(company.getId())) {
+            return Mono.error(new BusinessException("Acesso negado ao catálogo."));
+        }
+        
+        if (catalog.getMetaCatalogId() == null) {
+            return Mono.error(new BusinessException("Catálogo não possui ID da Meta vinculado."));
+        }
+
+        // 2. Construir o Filtro
+        // Estrutura da Meta: {"retailer_id": {"is_any": ["id1", "id2"]}}
+        Map<String, Object> filterMap = new HashMap<>();
+        
+        if (retailerIds != null && !retailerIds.isEmpty()) {
+            Map<String, Object> condition = new HashMap<>();
+            condition.put("is_any", retailerIds);
+            filterMap.put("retailer_id", condition);
+        } else {
+            // Se não passar IDs, cria um set que inclui tudo (ou lógica de negócio específica)
+            // Cuidado: Sets vazios podem dar erro dependendo do uso.
+            // Vamos assumir filtro por categoria ou marca se necessário, aqui exemplo simplificado:
+            return Mono.error(new BusinessException("É necessário informar ao menos um produto para o conjunto."));
+        }
+
+        String filterJson;
+        try {
+            filterJson = objectMapper.writeValueAsString(filterMap);
+        } catch (JsonProcessingException e) {
+            return Mono.error(new BusinessException("Erro ao processar filtros do conjunto."));
+        }
+
+        // 3. Preparar Request para Meta
+        String endpoint = graphApiBaseUrl + "/" + catalog.getMetaCatalogId() + "/product_sets";
+        
+        Map<String, Object> body = new HashMap<>();
+        body.put("name", name);
+        body.put("filter", filterJson); // A Meta espera o filtro como JSON String ou Objeto dependendo da versão, WebClient com BodyInserters geralmente serializa mapas corretamente, mas 'filter' é um campo especial.
+        // Na Graph API v18+, 'filter' deve ser passado como objeto JSON dentro do body.
+
+        return webClientBuilder.build()
+                .post()
+                .uri(endpoint)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + systemAccessToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(BodyInserters.fromValue(body)) // O Jackson vai serializar o body
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .map(response -> {
+                    String metaSetId = response.get("id").asText();
+                    
+                    ProductSet productSet = new ProductSet();
+                    productSet.setCatalog(catalog);
+                    productSet.setName(name);
+                    productSet.setMetaProductSetId(metaSetId);
+                    productSet.setFilterDefinition(filterJson);
+                    
+                    return productSetRepository.save(productSet);
+                })
+                .doOnSuccess(ps -> logger.info("Product Set '{}' criado com sucesso. Meta ID: {}", ps.getName(), ps.getMetaProductSetId()))
+                .doOnError(e -> logger.error("Erro ao criar Product Set na Meta: {}", e.getMessage()));
+    }
+
+    /**
+     * Vincula o Catálogo à WABA (WhatsApp Business Account).
+     * POST /{WABA_ID}/product_catalogs
+     */
+    private Mono<Void> connectCatalogToWaba(Company company, String metaCatalogId) {
+        if (company.getMetaWabaId() == null) {
+            logger.warn("WABA ID não configurado para empresa {}. Pulo vínculo WABA.", company.getName());
+            return Mono.empty();
+        }
+
+        String endpoint = graphApiBaseUrl + "/" + company.getMetaWabaId() + "/product_catalogs";
+        Map<String, String> body = new HashMap<>();
+        body.put("catalog_id", metaCatalogId);
+
+        return webClientBuilder.build()
+                .post()
+                .uri(endpoint)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + systemAccessToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(BodyInserters.fromValue(body))
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .doOnSuccess(json -> logger.info("Catálogo {} vinculado à WABA {}", metaCatalogId, company.getMetaWabaId()))
+                .doOnError(e -> logger.error("Falha ao vincular catálogo à WABA: {}", e.getMessage()))
+                .then();
+    }
+
+    /**
+     * Vincula o Catálogo ao Número de Telefone (para exibir na loja/perfil).
+     * POST /{PHONE_NUMBER_ID}/whatsapp_business_catalogs
+     */
+    private Mono<Void> connectCatalogToPhoneNumber(Company company, String metaCatalogId) {
+        if (company.getMetaPrimaryPhoneNumberId() == null) {
+            logger.warn("Phone Number ID não configurado. Pulo vínculo de número.");
+            return Mono.empty();
+        }
+
+        String endpoint = graphApiBaseUrl + "/" + company.getMetaPrimaryPhoneNumberId() + "/whatsapp_business_catalogs";
+        Map<String, String> body = new HashMap<>();
+        body.put("catalog_id", metaCatalogId);
+
+        return webClientBuilder.build()
+                .post()
+                .uri(endpoint)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + systemAccessToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(BodyInserters.fromValue(body))
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .doOnSuccess(json -> logger.info("Catálogo {} vinculado ao Número {}", metaCatalogId, company.getMetaPrimaryPhoneNumberId()))
+                .doOnError(e -> logger.error("Falha ao vincular catálogo ao número: {}", e.getMessage()))
+                .then();
     }
 
     private void processProductBatchSync(Catalog catalog, List<MetaSyncDTOs.MetaProductData> metaProducts) {

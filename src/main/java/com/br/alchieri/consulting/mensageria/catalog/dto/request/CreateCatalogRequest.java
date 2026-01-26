@@ -16,4 +16,7 @@ public class CreateCatalogRequest {
     @NotNull(message = "O ID do Business Manager é obrigatório.")
     @Schema(description = "ID do registro local do Meta Business Manager onde o catálogo será criado.", example = "1")
     private Long metaBusinessManagerId;
+
+    @Schema(description = "Segmento do catálogo (Vertical). Valores comuns: 'commerce' (produtos), 'vehicle', 'hotel'. Default: 'commerce'", defaultValue = "commerce")
+    private String vertical = "commerce";
 }

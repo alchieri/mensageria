@@ -44,6 +44,9 @@ public class Catalog {
     @Column(nullable = false)
     private String name;
 
+    @Column(nullable = false) // commerce, vehicle, hotel, etc.
+    private String vertical = "commerce";
+
     @Column(name = "meta_catalog_id", unique = true)
     private String metaCatalogId;
 
