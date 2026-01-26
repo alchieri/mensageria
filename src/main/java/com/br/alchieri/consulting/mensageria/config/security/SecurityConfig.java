@@ -82,7 +82,9 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/internal-callbacks/**").permitAll() // Permite, mas a lógica do controller protege com a chave
                 .requestMatchers(HttpMethod.GET, "/api/v1/webhook/whatsapp").permitAll() // Verificação do webhook
                 .requestMatchers(HttpMethod.POST, "/api/v1/webhook/whatsapp").permitAll() // Notificações do webhook (protegido por assinatura HMAC)
-                
+                .requestMatchers(HttpMethod.GET, "/api/v1/webhook/catalog").permitAll() // Verificação do webhook
+                .requestMatchers(HttpMethod.POST, "/api/v1/webhook/catalog").permitAll() // Notificações do webhook (protegido por assinatura HMAC)
+
                 .requestMatchers("/api/v1/admin/**").hasRole(Role.ROLE_BSP_ADMIN.name().replace("ROLE_", ""))
                 .requestMatchers("/api/v1/api-keys/**").hasAnyRole(Role.ROLE_COMPANY_ADMIN.name().replace("ROLE_", ""), Role.ROLE_BSP_ADMIN.name().replace("ROLE_", ""))
                 .requestMatchers("/api/v1/company/**").hasAnyRole(Role.ROLE_COMPANY_ADMIN.name().replace("ROLE_", ""), Role.ROLE_BSP_ADMIN.name().replace("ROLE_", ""))
@@ -95,6 +97,8 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/campaigns/**").authenticated()
                 .requestMatchers("/api/v1/chats/**").authenticated()
                 .requestMatchers("/api/v1/flows/**").authenticated()
+                .requestMatchers("/api/v1/bots/**").authenticated()
+                .requestMatchers("/api/v1/catalog/**").authenticated()
                 .requestMatchers("/api/v1/health-check/**").authenticated()
                 .requestMatchers("/api/v1/template-variables/**").authenticated()
                 

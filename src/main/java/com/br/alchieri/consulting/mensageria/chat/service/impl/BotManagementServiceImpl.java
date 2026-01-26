@@ -13,7 +13,6 @@ import org.springframework.transaction.annotation.Transactional;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.BotOptionStructureDTO;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.BotStepStructureDTO;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.BotStructureRequest;
-import com.br.alchieri.consulting.mensageria.chat.dto.request.CreateBotRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.CreateBotWithStructureRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.UpdateBotRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.response.BotOptionDTO;
@@ -22,11 +21,18 @@ import com.br.alchieri.consulting.mensageria.chat.dto.response.BotStepDTO;
 import com.br.alchieri.consulting.mensageria.chat.model.Bot;
 import com.br.alchieri.consulting.mensageria.chat.model.BotOption;
 import com.br.alchieri.consulting.mensageria.chat.model.BotStep;
-import com.br.alchieri.consulting.mensageria.chat.model.enums.BotStepType;
+import com.br.alchieri.consulting.mensageria.chat.model.ClientTemplate;
+import com.br.alchieri.consulting.mensageria.chat.model.Flow;
+import com.br.alchieri.consulting.mensageria.chat.model.MediaUpload;
+import com.br.alchieri.consulting.mensageria.chat.model.enums.FlowStatus;
 import com.br.alchieri.consulting.mensageria.chat.repository.BotOptionRepository;
 import com.br.alchieri.consulting.mensageria.chat.repository.BotRepository;
 import com.br.alchieri.consulting.mensageria.chat.repository.BotStepRepository;
+import com.br.alchieri.consulting.mensageria.chat.repository.ClientTemplateRepository;
+import com.br.alchieri.consulting.mensageria.chat.repository.FlowRepository;
+import com.br.alchieri.consulting.mensageria.chat.repository.MediaUploadRepository;
 import com.br.alchieri.consulting.mensageria.chat.service.BotManagementService;
+import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.exception.ResourceNotFoundException;
 import com.br.alchieri.consulting.mensageria.model.Company;
 
@@ -41,6 +47,10 @@ public class BotManagementServiceImpl implements BotManagementService {
     private final BotRepository botRepository;
     private final BotStepRepository botStepRepository;
     private final BotOptionRepository botOptionRepository;
+
+    private final FlowRepository flowRepository;
+    private final ClientTemplateRepository templateRepository;
+    private final MediaUploadRepository mediaRepository;
 
     @Override
     public List<BotResponseDTO> listBots(Company company) {
@@ -182,6 +192,7 @@ public class BotManagementServiceImpl implements BotManagementService {
     @Transactional
     @Override
     public void saveBotStructure(Long botId, BotStructureRequest request, Company company) {
+        
         Bot bot = findBot(botId, company);
 
         // 1. Carregar passos existentes para identificar atualizações vs criações
@@ -196,6 +207,7 @@ public class BotManagementServiceImpl implements BotManagementService {
         List<BotStep> stepsToKeep = new ArrayList<>();
 
         for (BotStepStructureDTO stepDto : request.getSteps()) {
+            
             BotStep stepEntity;
 
             // É atualização?
@@ -212,6 +224,9 @@ public class BotManagementServiceImpl implements BotManagementService {
             stepEntity.setStepType(stepDto.getStepType());
             stepEntity.setContent(stepDto.getContent());
             stepEntity.setMetadata(stepDto.getMetadata());
+
+            // --- VALIDAÇÃO DE CONTEÚDO POR TIPO ---
+            validateAndLinkContent(stepEntity, stepDto, company);
 
             // Salva para garantir ID (se for novo)
             stepEntity = botStepRepository.save(stepEntity);
@@ -333,5 +348,82 @@ public class BotManagementServiceImpl implements BotManagementService {
             dto.setOptions(options);
         }
         return dto;
+    }
+
+    /**
+     * Valida se o ID passado no content existe e é válido para o tipo de passo.
+     */
+    private void validateAndLinkContent(BotStep stepEntity, BotStepStructureDTO dto, Company company) {
+        String contentId = dto.getContent();
+
+        switch (dto.getStepType()) {
+            case FLOW -> {
+                if (contentId == null || contentId.isBlank()) {
+                    throw new BusinessException("Para passos do tipo FLOW, é necessário informar o ID do fluxo.");
+                }
+                Long flowId = parseId(contentId);
+                Flow flow = flowRepository.findById(flowId)
+                        .orElseThrow(() -> new ResourceNotFoundException("Flow ID " + flowId + " não encontrado."));
+                
+                if (!flow.getCompany().getId().equals(company.getId())) {
+                    throw new BusinessException("O Flow informado não pertence à sua empresa.");
+                }
+                // Opcional: Validar se está Publicado
+                if (flow.getStatus() != FlowStatus.PUBLISHED) {
+                    throw new BusinessException("O Flow '" + flow.getName() + "' não está publicado e não pode ser vinculado.");
+                }
+                
+                stepEntity.setContent(String.valueOf(flow.getId())); // Garante que salvamos o ID
+            }
+            case TEMPLATE -> {
+                if (contentId == null || contentId.isBlank()) {
+                    throw new BusinessException("Para passos do tipo TEMPLATE, é necessário informar o ID do template.");
+                }
+                Long templateId = parseId(contentId);
+                ClientTemplate template = templateRepository.findById(templateId)
+                        .orElseThrow(() -> new ResourceNotFoundException("Template ID " + templateId + " não encontrado."));
+
+                if (!template.getCompany().getId().equals(company.getId())) {
+                    throw new BusinessException("O Template informado não pertence à sua empresa.");
+                }
+                if (!"APPROVED".equalsIgnoreCase(template.getStatus())) {
+                    throw new BusinessException("O Template '" + template.getTemplateName() + "' não está Aprovado (Status: " + template.getStatus() + ").");
+                }
+
+                stepEntity.setContent(String.valueOf(template.getId())); 
+            }
+            case MEDIA -> {
+                if (contentId == null || contentId.isBlank()) {
+                    throw new BusinessException("Para passos do tipo MEDIA, é necessário realizar o upload e informar o ID da mídia.");
+                }
+                // Assume que o Front já fez upload via /api/v1/media e mandou o UUID ou ID
+                // Se sua MediaUpload usa String UUID:
+                MediaUpload media = mediaRepository.findById(contentId)
+                        .orElseThrow(() -> new ResourceNotFoundException("Mídia ID " + contentId + " não encontrada."));
+                
+                // Se sua MediaUpload usa Long ID:
+                // Long mediaId = parseId(contentId);
+                // MediaUpload media = mediaRepository.findById(mediaId)...
+
+                stepEntity.setContent(media.getId().toString()); // Salva o ID da mídia
+            }
+            default -> {
+                // Para TEXT, HANDOFF, END, o conteúdo é texto livre
+                stepEntity.setContent(dto.getContent());
+            }
+        }
+        
+        // Copia metadados e tipo
+        stepEntity.setStepType(dto.getStepType());
+        stepEntity.setMetadata(dto.getMetadata());
+        stepEntity.setTitle(dto.getTitle());
+    }
+
+    private Long parseId(String idStr) {
+        try {
+            return Long.parseLong(idStr);
+        } catch (NumberFormatException e) {
+            throw new BusinessException("ID inválido fornecido: " + idStr);
+        }
     }
 }

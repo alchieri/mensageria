@@ -20,6 +20,7 @@ import com.br.alchieri.consulting.mensageria.model.User;
 import com.br.alchieri.consulting.mensageria.util.SecurityUtils;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,7 @@ import lombok.RequiredArgsConstructor;
 @RequestMapping("/api/v1/catalog")
 @Tag(name = "Catalog Management", description = "Gestão de Produtos no Catálogo Meta (Marketing API).")
 @RequiredArgsConstructor
+@SecurityRequirement(name = "bearerAuth")
 public class CatalogController {
 
     private final MetaCatalogService metaCatalogService;

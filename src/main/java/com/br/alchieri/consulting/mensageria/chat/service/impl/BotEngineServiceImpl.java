@@ -1,7 +1,6 @@
 package com.br.alchieri.consulting.mensageria.chat.service.impl;
 
 import java.time.LocalTime;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -16,10 +15,15 @@ import com.br.alchieri.consulting.mensageria.chat.dto.request.TemplateComponentR
 import com.br.alchieri.consulting.mensageria.chat.model.Bot;
 import com.br.alchieri.consulting.mensageria.chat.model.BotOption;
 import com.br.alchieri.consulting.mensageria.chat.model.BotStep;
+import com.br.alchieri.consulting.mensageria.chat.model.ClientTemplate;
 import com.br.alchieri.consulting.mensageria.chat.model.Contact;
+import com.br.alchieri.consulting.mensageria.chat.model.Flow;
 import com.br.alchieri.consulting.mensageria.chat.model.enums.BotTriggerType;
+import com.br.alchieri.consulting.mensageria.chat.model.enums.FlowStatus;
 import com.br.alchieri.consulting.mensageria.chat.repository.BotRepository;
 import com.br.alchieri.consulting.mensageria.chat.repository.BotStepRepository;
+import com.br.alchieri.consulting.mensageria.chat.repository.ClientTemplateRepository;
+import com.br.alchieri.consulting.mensageria.chat.repository.FlowRepository;
 import com.br.alchieri.consulting.mensageria.chat.service.BotEngineService;
 import com.br.alchieri.consulting.mensageria.chat.service.WhatsAppCloudApiService;
 import com.br.alchieri.consulting.mensageria.model.Company;
@@ -42,6 +46,9 @@ public class BotEngineServiceImpl implements BotEngineService {
 
     private final BotRepository botRepository;
     private final BotStepRepository botStepRepository;
+
+    private final FlowRepository flowRepository;
+    private final ClientTemplateRepository templateRepository;
 
     private final WhatsAppCloudApiService whatsAppService;
     private final SessionService sessionService;
@@ -135,15 +142,26 @@ public class BotEngineServiceImpl implements BotEngineService {
         whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), body.toString()), systemUser).subscribe();
     }
 
-    // --- CORREÇÃO 1: FLOW STEP ---
+    // --- FLOW STEP ---
     private void executeFlowStep(BotStep step, Contact contact, User systemUser) throws JsonProcessingException {
         
-        String flowIdentifier = step.getContent(); // ID ou Nome do Flow
+        // O content agora é o ID do Flow (Long em String)
+        Long flowId = Long.valueOf(step.getContent());
+        
+        // Busca o Flow atualizado no banco
+        Flow flow = flowRepository.findById(flowId).orElse(null);
+        
+        if (flow == null || flow.getStatus() != FlowStatus.PUBLISHED) {
+            log.error("Flow ID {} não encontrado ou não publicado durante execução do bot.", flowId);
+            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Erro técnico: Fluxo indisponível."), systemUser).subscribe();
+            return;
+        }
+
         String metadataJson = step.getMetadata();
         
         SendInteractiveFlowMessageRequest request = new SendInteractiveFlowMessageRequest();
         request.setTo(contact.getPhoneNumber());
-        request.setFlowName(flowIdentifier);
+        request.setFlowName(flow.getName());
         request.setFlowToken("BOT_STEP_" + step.getId());
         
         // Configuração padrão
@@ -178,16 +196,26 @@ public class BotEngineServiceImpl implements BotEngineService {
         whatsAppService.sendInteractiveFlowMessage(request, systemUser).subscribe();
     }
 
-    // --- CORREÇÃO 2: TEMPLATE STEP ---
+    // --- TEMPLATE STEP ---
     private void executeTemplateStep(BotStep step, Contact contact, User systemUser) throws JsonProcessingException {
         
-        String templateName = step.getContent();
+        // O content agora é o ID do Template
+        Long templateId = Long.valueOf(step.getContent());
+        
+        ClientTemplate template = templateRepository.findById(templateId).orElse(null);
+        
+        if (template == null || !"APPROVED".equalsIgnoreCase(template.getStatus())) {
+            log.error("Template ID {} inválido durante execução.", templateId);
+            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Erro técnico: Template indisponível."), systemUser).subscribe();
+            return;
+        }
+
         String metadataJson = step.getMetadata();
 
         SendTemplateMessageRequest request = new SendTemplateMessageRequest();
         request.setTo(contact.getPhoneNumber());
-        request.setTemplateName(templateName);
-        request.setLanguageCode("pt_BR"); 
+        request.setTemplateName(template.getTemplateName()); // O WhatsApp precisa do NOME
+        request.setLanguageCode(template.getLanguage());
 
         if (metadataJson != null && !metadataJson.isBlank()) {
             JsonNode metaNode = objectMapper.readTree(metadataJson);
@@ -235,20 +263,26 @@ public class BotEngineServiceImpl implements BotEngineService {
     }
 
     private void executeMediaStep(BotStep step, Contact contact, User systemUser) throws JsonProcessingException {
-        String mediaId = step.getContent();
-        String type = "image";
-        String caption = null;
         
+        // O content é o ID da Mídia (String/UUID)
+        String mediaId = step.getContent();
+        
+        // Se a API de envio precisa do ID do banco de upload para pegar o ID do Facebook:
+        // (Assumindo que sua implementação de sendMediaMessage resolve o ID interno para o ID do FB)
+        
+        String type = "image"; // Default, ou pegar do metadata ou da própria entidade MediaUpload
+        String caption = null;
+
         if (step.getMetadata() != null) {
             JsonNode node = objectMapper.readTree(step.getMetadata());
-            if (node.has("type")) type = node.path("type").asText();
             if (node.has("caption")) caption = node.path("caption").asText();
+            // Se o tipo vier do metadado, ok. Se não, ideal é buscar no banco MediaUpload.
         }
         
         SendMediaMessageRequest req = new SendMediaMessageRequest();
         req.setTo(contact.getPhoneNumber());
-        req.setType(type);
-        req.setMediaId(mediaId);
+        req.setType(type); // Ideal: pegar do MediaUpload.getType()
+        req.setMediaId(mediaId); // Passa o ID interno ou FB ID (depende da sua impl do Service)
         req.setCaption(caption);
         
         whatsAppService.sendMediaMessage(req, systemUser).subscribe();

@@ -36,7 +36,7 @@ public class Product {
     private Catalog catalog;
 
     @Column(nullable = false)
-    private String sku; // Retailer ID na Meta
+    private String sku;
 
     @Column(nullable = false)
     private String name;

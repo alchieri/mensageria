@@ -14,9 +14,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.br.alchieri.consulting.mensageria.chat.dto.request.BotStructureRequest;
-import com.br.alchieri.consulting.mensageria.chat.dto.request.CreateBotRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.CreateBotWithStructureRequest;
-import com.br.alchieri.consulting.mensageria.chat.dto.request.UpdateBotRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.response.BotResponseDTO;
 import com.br.alchieri.consulting.mensageria.chat.dto.response.BotStepDTO;
 import com.br.alchieri.consulting.mensageria.chat.service.BotManagementService;
@@ -28,6 +26,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +35,7 @@ import lombok.RequiredArgsConstructor;
 @RequestMapping("/api/v1/bots")
 @Tag(name = "Bot Builder", description = "API para gestão e construção de fluxos de chat automatizados (Bots).")
 @RequiredArgsConstructor
+@SecurityRequirement(name = "bearerAuth")
 public class BotController {
 
     private final BotManagementService botService;
@@ -81,6 +81,18 @@ public class BotController {
         User user = securityUtils.getAuthenticatedUser();
         botService.deleteBot(id, user.getCompany());
         return ResponseEntity.ok(new ApiResponse(true, "Bot removido", null));
+    }
+
+    @GetMapping("/{id}")
+    @Operation(summary = "Obter Bot", description = "Retorna os detalhes de um bot específico.")
+    @ApiResponses(value = {
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Bot removido com sucesso"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Bot não encontrado", content = @Content)
+    })
+    public ResponseEntity<ApiResponse> getBot(@PathVariable Long id) {
+        User user = securityUtils.getAuthenticatedUser();
+        BotResponseDTO bot = botService.getBot(id, user.getCompany());
+        return ResponseEntity.ok(new ApiResponse(true, "Bot recuperado", bot));
     }
 
     // --- STEPS (PASSOS) ---

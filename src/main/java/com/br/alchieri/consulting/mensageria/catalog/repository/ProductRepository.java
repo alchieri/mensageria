@@ -10,5 +10,8 @@ import com.br.alchieri.consulting.mensageria.catalog.model.Product;
 
 @Repository
 public interface ProductRepository extends JpaRepository<Product, Long> {
+    
     Optional<Product> findByCatalogAndSku(Catalog catalog, String sku);
+
+    Optional<Product> findBySku(String retailerId);
 }

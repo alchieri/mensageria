@@ -32,4 +32,6 @@ public interface FlowRepository extends JpaRepository<Flow, Long> {
      * @return O número de flows encontrados.
      */
     long countByCompanyAndStatus(Company company, FlowStatus status);
+
+    Optional<Flow> findByIdAndCompanyAndStatus(Long id, Company company, FlowStatus status);
 }

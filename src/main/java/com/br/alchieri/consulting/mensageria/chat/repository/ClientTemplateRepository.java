@@ -47,4 +47,7 @@ public interface ClientTemplateRepository extends JpaRepository<ClientTemplate, 
      * @return O número de templates encontrados.
      */
     long countByCompanyAndStatusIn(Company company, Collection<String> statuses);
+
+    // Busca por ID, Empresa e Status APROVADO
+    Optional<ClientTemplate> findByIdAndCompanyAndStatus(Long id, Company company, String status);
 }
