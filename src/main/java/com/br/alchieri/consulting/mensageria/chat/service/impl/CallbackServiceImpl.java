@@ -95,7 +95,7 @@ public class CallbackServiceImpl implements CallbackService {
 
         if (company.getGeneralCallbackUrl() != null && !company.getGeneralCallbackUrl().isBlank()) {
             sendToClientEndpoint(company.getGeneralCallbackUrl(), clientPayload,
-                String.format("Mensagem Recebida para Empresa %d, De %s", company.getId(), messageLog.getSender()));
+                String.format("Mensagem Recebida para Empresa %d, De %s", company.getId(), messageLog.getSenderPhoneNumber()));
         }
     }
 

@@ -34,7 +34,7 @@ public class IncomingMessagePayload {
          }
         return IncomingMessagePayload.builder()
                 .messageId(log.getWamid())
-                .from(log.getSender())
+                .from(log.getChannelId()) // Usar Channel ID como "from"
                 .timestamp(log.getCreatedAt()) // Usar timestamp de criação do log (que veio da msg)
                 .type(log.getMessageType())
                 .content(log.getContent())

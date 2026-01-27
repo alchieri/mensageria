@@ -51,6 +51,9 @@ public class SendInteractiveFlowMessageRequest {
     @Schema(description = "Payload para a ação do Flow. Obrigatório se 'flowAction' for 'navigate' ou 'data_exchange'. Contém 'screen' e 'data' para a primeira tela.")
     private FlowActionPayload flowActionPayload;
 
+    @Schema(description = "ID do telefone (Meta ID) que enviará a mensagem. Se nulo, usa o padrão da empresa.", example = "10555...")
+    private String fromPhoneNumberId;
+
     @Data
     @Schema(name = "InteractiveFlowActionPayload")
     public static class FlowActionPayload {

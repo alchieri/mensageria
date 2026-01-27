@@ -54,8 +54,17 @@ public class WhatsAppMessageLog {
     @Column(nullable = false)
     private MessageDirection direction; // INCOMING ou OUTGOING
 
-    @Column(nullable = false)
-    private String sender; // Número remetente (usuário final ou nosso nº)
+    @Column(name = "sender_phone_number")
+    private String senderPhoneNumber; // O número real de quem enviou (Ex: +5545999...)
+                                      // Se OUTGOING: Número da Empresa
+                                      // Se INCOMING: Número do Cliente
+
+    @Column(name = "channel_id")
+    private String channelId; // O ID da Meta do telefone da Empresa envolvido (Ex: 100555...)
+                              // Fundamental para saber por qual "linha" a conversa ocorreu.
+
+    // @Column(nullable = false)
+    // private String sender; // Número remetente (usuário final ou nosso nº)
 
     @Column(nullable = false)
     private String recipient; // Número destinatário (nosso nº ou usuário final)

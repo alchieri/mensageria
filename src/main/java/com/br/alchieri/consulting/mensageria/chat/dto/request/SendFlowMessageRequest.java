@@ -48,4 +48,7 @@ public class SendFlowMessageRequest {
     // Parâmetros a serem passados para a tela inicial do Flow
     @Schema(description = "Parâmetros dinâmicos (chave-valor) para a tela inicial do Flow. As chaves devem corresponder ao que o Flow espera.")
     private Map<String, Object> flowParameters;
+
+    @Schema(description = "ID do telefone (Meta ID) que enviará a mensagem. Se nulo, usa o padrão da empresa.", example = "10555...")
+    private String fromPhoneNumberId;
 }

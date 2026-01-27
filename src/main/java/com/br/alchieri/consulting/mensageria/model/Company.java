@@ -58,9 +58,14 @@ public class Company {
     private String metaWabaId;
 
     @Column(nullable = true) // O principal Phone Number ID da empresa, pode haver outros
+    @Deprecated
     private String metaPrimaryPhoneNumberId;
 
+    @OneToMany(mappedBy = "company", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<WhatsAppPhoneNumber> phoneNumbers = new ArrayList<>();
+
     @Column(nullable = true)
+    @Deprecated
     private String facebookBusinessManagerId;
 
     @Size(max = 20)

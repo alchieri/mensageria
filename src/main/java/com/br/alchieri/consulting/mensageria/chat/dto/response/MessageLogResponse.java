@@ -20,7 +20,8 @@ public class MessageLogResponse {
     private String wamid;
     private Long userId; // ID do usuário do sistema que enviou a mensagem
     private MessageDirection direction;
-    private String sender;
+    private String senderPhoneNumber;
+    private String channelId;
     private String recipient;
     private String messageType;
     private String content;
@@ -36,7 +37,8 @@ public class MessageLogResponse {
                 .wamid(log.getWamid())
                 .userId(log.getUser() != null ? log.getUser().getId() : null)
                 .direction(log.getDirection())
-                .sender(log.getSender())
+                .senderPhoneNumber(log.getSenderPhoneNumber())
+                .channelId(log.getChannelId())
                 .recipient(log.getRecipient())
                 .messageType(log.getMessageType())
                 .content(log.getContent())

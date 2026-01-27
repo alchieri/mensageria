@@ -1,5 +1,6 @@
 package com.br.alchieri.consulting.mensageria.chat.dto.request;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
@@ -17,4 +18,7 @@ public class SendProductMessageRequest {
     
     private String bodyText; // Opcional para Single Product
     private String footerText; // Opcional
+
+    @Schema(description = "ID do telefone (Meta ID) que enviará a mensagem. Se nulo, usa o padrão da empresa.", example = "10555...")
+    private String fromPhoneNumberId;
 }

@@ -74,7 +74,7 @@ public class MessageLogServiceImpl implements MessageLogService {
                 .map(log -> {
                     // Determina qual é o número do contato externo
                     String contactPhoneNumber = log.getDirection() == MessageDirection.INCOMING
-                            ? log.getSender()
+                            ? log.getSenderPhoneNumber()
                             : log.getRecipient();
 
                     // Tenta encontrar o nome do contato no banco local
@@ -104,7 +104,7 @@ public class MessageLogServiceImpl implements MessageLogService {
         return lastMessages.stream()
                 .map(log -> {
                     String contactPhoneNumber = log.getDirection() == MessageDirection.INCOMING
-                            ? log.getSender()
+                            ? log.getSenderPhoneNumber()
                             : log.getRecipient();
 
                     // Busca o contato para pegar o nome E a contagem de não lidas

@@ -20,4 +20,7 @@ public class SendTextMessageRequest {
     @Schema(description = "Conteúdo da mensagem de texto.", maxLength = 4096,
             example = "Olá! Este é um teste.", requiredMode = Schema.RequiredMode.REQUIRED)
     private String message;
+
+    @Schema(description = "ID do telefone (Meta ID) que enviará a mensagem. Se nulo, usa o padrão da empresa.", example = "10555...")
+    private String fromPhoneNumberId;
 }

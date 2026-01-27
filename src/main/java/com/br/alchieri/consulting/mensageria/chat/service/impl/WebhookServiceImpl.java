@@ -15,7 +15,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.br.alchieri.consulting.mensageria.chat.dto.request.SendTextMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.webhook.WebhookEventPayload;
 import com.br.alchieri.consulting.mensageria.chat.model.Contact;
 import com.br.alchieri.consulting.mensageria.chat.model.Flow;
@@ -36,17 +35,16 @@ import com.br.alchieri.consulting.mensageria.chat.service.BotEngineService;
 import com.br.alchieri.consulting.mensageria.chat.service.CallbackService;
 import com.br.alchieri.consulting.mensageria.chat.service.FlowService;
 import com.br.alchieri.consulting.mensageria.chat.service.WebhookService;
-import com.br.alchieri.consulting.mensageria.chat.service.WhatsAppCloudApiService;
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.CompanyTierStatus;
 import com.br.alchieri.consulting.mensageria.model.User;
-import com.br.alchieri.consulting.mensageria.model.enums.ConversationState;
+import com.br.alchieri.consulting.mensageria.model.WhatsAppPhoneNumber;
 import com.br.alchieri.consulting.mensageria.model.enums.Role;
 import com.br.alchieri.consulting.mensageria.model.redis.UserSession;
-import com.br.alchieri.consulting.mensageria.repository.CompanyRepository;
 import com.br.alchieri.consulting.mensageria.repository.CompanyTierStatusRepository;
 import com.br.alchieri.consulting.mensageria.repository.UserRepository;
+import com.br.alchieri.consulting.mensageria.repository.WhatsAppPhoneNumberRepository;
 import com.br.alchieri.consulting.mensageria.service.AdminNotificationService;
 import com.br.alchieri.consulting.mensageria.service.BillingService;
 import com.br.alchieri.consulting.mensageria.service.impl.SessionService;
@@ -69,7 +67,7 @@ public class WebhookServiceImpl implements WebhookService {
     private final SqsTemplate sqsTemplate;
     
     private final WhatsAppMessageLogRepository messageLogRepository;
-    private final CompanyRepository companyRepository;
+    // private final CompanyRepository companyRepository;
     private final ContactRepository contactRepository;
     private final ScheduledMessageRepository scheduledMessageRepository;
     private final FlowHealthAlertRepository flowHealthAlertRepository;
@@ -77,13 +75,14 @@ public class WebhookServiceImpl implements WebhookService {
     private final CompanyTierStatusRepository companyTierStatusRepository;
     private final FlowDataRepository flowDataRepository;
     private final UserRepository userRepository;
+    private final WhatsAppPhoneNumberRepository phoneNumberRepository;
     
     private final CallbackService callbackService;
     private final AdminNotificationService adminNotificationService;
     private final FlowService flowService;
     private final BillingService billingService;
     private final SessionService sessionService;
-    private final WhatsAppCloudApiService whatsAppCloudApiService;
+    // private final WhatsAppCloudApiService whatsAppCloudApiService;
     private final BotEngineService botEngineService;
 
     @Value("${webhook-queue.name}")
@@ -210,8 +209,14 @@ public class WebhookServiceImpl implements WebhookService {
                         switch (field) {
                             case "messages":
                                 String webhookPhoneNumberId = value.path("metadata").path("phone_number_id").asText(null);
-                                Company companyForMessages = findCompanyByMetaPhoneNumberId(webhookPhoneNumberId);
-                                processMessagesFieldValue(value, companyForMessages);
+                                
+                                WhatsAppPhoneNumber channel = findChannelByMetaId(webhookPhoneNumberId);
+                                
+                                if (channel != null) {
+                                    processMessagesFieldValue(value, channel);
+                                } else {
+                                    log.warn("Ignorando mensagens para ID desconhecido: {}", webhookPhoneNumberId);
+                                }
                                 break;
                             case "flows":
                                 handleFlowsField(value, wabaId);
@@ -357,11 +362,13 @@ public class WebhookServiceImpl implements WebhookService {
         }
     }
 
-    private void processMessagesFieldValue(JsonNode valueNode, Company companyAssociatedWithWebhook) {
+    private void processMessagesFieldValue(JsonNode valueNode, WhatsAppPhoneNumber channel) {
+
+        Company company = channel.getCompany();
         if (valueNode.has("statuses")) {
             for (JsonNode statusNode : valueNode.get("statuses")) {
                 try { 
-                    handleMessageStatusUpdate(statusNode, companyAssociatedWithWebhook);
+                    handleMessageStatusUpdate(statusNode, company);
                 } catch (Exception e) { 
                     log.error("Erro ao processar status individual: {}", statusNode, e);
                 }
@@ -371,7 +378,7 @@ public class WebhookServiceImpl implements WebhookService {
             String ourPhoneNumber = valueNode.path("metadata").path("display_phone_number").asText(null);
             for (JsonNode messageNode : valueNode.get("messages")) {
                  try {
-                    handleIncomingMessage(messageNode, contactsNode, ourPhoneNumber, companyAssociatedWithWebhook);
+                    handleIncomingMessage(messageNode, contactsNode, ourPhoneNumber, company, channel);
                 } catch (Exception e) {
                     log.error("Erro ao processar mensagem recebida individual: {}", messageNode, e);
                 }
@@ -482,7 +489,7 @@ public class WebhookServiceImpl implements WebhookService {
     }
 
     @Transactional
-    private void handleIncomingMessage(JsonNode messageNode, JsonNode contactsNode, String ourPhoneNumber, Company companyAssociatedWithWebhook) {
+    private void handleIncomingMessage(JsonNode messageNode, JsonNode contactsNode, String ourPhoneNumber, Company companyAssociatedWithWebhook, WhatsAppPhoneNumber channel) {
         
         String wamid = messageNode.path("id").asText();
         if (wamid == null || wamid.isBlank()) { 
@@ -510,7 +517,8 @@ public class WebhookServiceImpl implements WebhookService {
         newLog.setWamid(wamid);
         newLog.setCompany(companyAssociatedWithWebhook);
         newLog.setDirection(MessageDirection.INCOMING);
-        newLog.setSender(from);
+        newLog.setChannelId(channel.getPhoneNumberId());
+        newLog.setSenderPhoneNumber(from);
         newLog.setRecipient(ourPhoneNumber);
         newLog.setMessageType(type.toUpperCase());
         newLog.setStatus("RECEIVED");
@@ -539,8 +547,7 @@ public class WebhookServiceImpl implements WebhookService {
         
         contact.setUnreadMessagesCount(contact.getUnreadMessagesCount() + 1);
         contact.setUpdatedAt(LocalDateTime.now());
-        // Se sua entidade Contact tiver o campo lastActiveAt, atualize aqui:
-        // contact.setLastActiveAt(LocalDateTime.now());
+        contact.setLastActiveAt(LocalDateTime.now());
         contactRepository.save(contact);
 
         // ---------------------------------------------------------
@@ -596,75 +603,75 @@ public class WebhookServiceImpl implements WebhookService {
         }
     }
 
-    private void processBotFlow(ConversationState state, String input, String type, Contact contact, UserSession session, Company company) {
-        User systemUser = getSystemUserForCompany(company); 
+    // private void processBotFlow(ConversationState state, String input, String type, Contact contact, UserSession session, Company company) {
+    //     User systemUser = getSystemUserForCompany(company); 
 
-        switch (state) {
-            case IDLE:
-                if (isGreeting(input)) {
-                    sendMainMenu(contact, systemUser);
-                    sessionService.updateState(session, ConversationState.WAITING_MENU_OPTION);
-                }
-                break;
+    //     switch (state) {
+    //         case IDLE:
+    //             if (isGreeting(input)) {
+    //                 sendMainMenu(contact, systemUser);
+    //                 sessionService.updateState(session, ConversationState.WAITING_MENU_OPTION);
+    //             }
+    //             break;
 
-            case WAITING_MENU_OPTION:
-                handleMenuOption(input, contact, session, systemUser);
-                break;
+    //         case WAITING_MENU_OPTION:
+    //             handleMenuOption(input, contact, session, systemUser);
+    //             break;
 
-            case WAITING_DOCUMENT:
-                // Exemplo simples
-                if (input != null && input.replaceAll("\\D", "").length() == 11) {
-                    session.addContextData("cpf", input);
-                    whatsAppCloudApiService.sendTextMessage(
-                        createRequest(contact.getPhoneNumber(), "CPF recebido! Simulando consulta..."), 
-                        systemUser
-                    ).subscribe();
-                    sessionService.resetSession(session);
-                } else {
-                     whatsAppCloudApiService.sendTextMessage(
-                        createRequest(contact.getPhoneNumber(), "CPF inválido. Tente novamente."), 
-                        systemUser
-                    ).subscribe();
-                }
-                break;
+    //         case WAITING_DOCUMENT:
+    //             // Exemplo simples
+    //             if (input != null && input.replaceAll("\\D", "").length() == 11) {
+    //                 session.addContextData("cpf", input);
+    //                 whatsAppCloudApiService.sendTextMessage(
+    //                     createRequest(contact.getPhoneNumber(), "CPF recebido! Simulando consulta..."), 
+    //                     systemUser
+    //                 ).subscribe();
+    //                 sessionService.resetSession(session);
+    //             } else {
+    //                  whatsAppCloudApiService.sendTextMessage(
+    //                     createRequest(contact.getPhoneNumber(), "CPF inválido. Tente novamente."), 
+    //                     systemUser
+    //                 ).subscribe();
+    //             }
+    //             break;
                 
-            default:
-                // Se estado desconhecido, reseta (fail-safe)
-                sessionService.resetSession(session);
-                break;
-        }
-    }
+    //         default:
+    //             // Se estado desconhecido, reseta (fail-safe)
+    //             sessionService.resetSession(session);
+    //             break;
+    //     }
+    // }
 
-    private void handleMenuOption(String input, Contact contact, UserSession session, User systemUser) {
+    // private void handleMenuOption(String input, Contact contact, UserSession session, User systemUser) {
         
-        String option = input.trim().toLowerCase();
+    //     String option = input.trim().toLowerCase();
 
-        if (option.equals("1") || option.contains("financeiro")) {
-            whatsAppCloudApiService.sendTextMessage(
-                createRequest(contact.getPhoneNumber(), "Opção Financeiro selecionada. Digite seu CPF:"), 
-                systemUser
-            ).subscribe();
-            sessionService.updateState(session, ConversationState.WAITING_DOCUMENT);
+    //     if (option.equals("1") || option.contains("financeiro")) {
+    //         whatsAppCloudApiService.sendTextMessage(
+    //             createRequest(contact.getPhoneNumber(), "Opção Financeiro selecionada. Digite seu CPF:"), 
+    //             systemUser
+    //         ).subscribe();
+    //         sessionService.updateState(session, ConversationState.WAITING_DOCUMENT);
 
-        } else if (option.equals("2") || option.contains("suporte")) {
-            whatsAppCloudApiService.sendTextMessage(
-                createRequest(contact.getPhoneNumber(), "Transferindo para humano..."), 
-                systemUser
-            ).subscribe();
-            sessionService.updateState(session, ConversationState.IN_SERVICE_HUMAN);
+    //     } else if (option.equals("2") || option.contains("suporte")) {
+    //         whatsAppCloudApiService.sendTextMessage(
+    //             createRequest(contact.getPhoneNumber(), "Transferindo para humano..."), 
+    //             systemUser
+    //         ).subscribe();
+    //         sessionService.updateState(session, ConversationState.IN_SERVICE_HUMAN);
 
-        } else {
-            whatsAppCloudApiService.sendTextMessage(
-                createRequest(contact.getPhoneNumber(), "Opção inválida. Digite 1 (Financeiro) ou 2 (Suporte)."), 
-                systemUser
-            ).subscribe();
-        }
-    }
+    //     } else {
+    //         whatsAppCloudApiService.sendTextMessage(
+    //             createRequest(contact.getPhoneNumber(), "Opção inválida. Digite 1 (Financeiro) ou 2 (Suporte)."), 
+    //             systemUser
+    //         ).subscribe();
+    //     }
+    // }
 
-    private void sendMainMenu(Contact contact, User systemUser) {
-        String menu = "Olá " + contact.getName() + "! Escolha uma opção:\n1️⃣ Financeiro\n2️⃣ Suporte";
-        whatsAppCloudApiService.sendTextMessage(createRequest(contact.getPhoneNumber(), menu), systemUser).subscribe();
-    }
+    // private void sendMainMenu(Contact contact, User systemUser) {
+    //     String menu = "Olá " + contact.getName() + "! Escolha uma opção:\n1️⃣ Financeiro\n2️⃣ Suporte";
+    //     whatsAppCloudApiService.sendTextMessage(createRequest(contact.getPhoneNumber(), menu), systemUser).subscribe();
+    // }
 
     private String extractContentForBot(JsonNode messageNode, String type) {
         if ("text".equals(type)) {
@@ -678,18 +685,18 @@ public class WebhookServiceImpl implements WebhookService {
         return "";
     }
 
-    private boolean isGreeting(String text) {
-        if (text == null) return false;
-        String t = text.toLowerCase();
-        return t.contains("oi") || t.contains("olá") || t.contains("ola") || t.contains("bom dia") || t.contains("boa tarde") || t.equals("menu");
-    }
+    // private boolean isGreeting(String text) {
+    //     if (text == null) return false;
+    //     String t = text.toLowerCase();
+    //     return t.contains("oi") || t.contains("olá") || t.contains("ola") || t.contains("bom dia") || t.contains("boa tarde") || t.equals("menu");
+    // }
     
-    private SendTextMessageRequest createRequest(String to, String body) {
-        SendTextMessageRequest req = new SendTextMessageRequest();
-        req.setTo(to);
-        req.setMessage(body);
-        return req;
-    }
+    // private SendTextMessageRequest createRequest(String to, String body) {
+    //     SendTextMessageRequest req = new SendTextMessageRequest();
+    //     req.setTo(to);
+    //     req.setMessage(body);
+    //     return req;
+    // }
     
     private User getSystemUserForCompany(Company company) {
         
@@ -751,24 +758,24 @@ public class WebhookServiceImpl implements WebhookService {
         });
     }
 
-    private Company findCompanyByMetaPhoneNumberId(String metaPhoneNumberId) { // Renomeado
-        if (metaPhoneNumberId == null || metaPhoneNumberId.isBlank()) {
-            log.trace("findCompanyByMetaPhoneNumberId chamado com ID nulo ou vazio.");
-            return null;
-        }
-        log.debug("Buscando empresa por metaPrimaryPhoneNumberId ou metaPhoneNumberId: {}", metaPhoneNumberId);
-        // Primeiro tenta pelo campo primário, depois por um campo genérico (se você tiver múltiplos números por empresa)
-        Optional<Company> company = companyRepository.findByMetaPrimaryPhoneNumberId(metaPhoneNumberId);
-        if (company.isPresent()) {
-            return company.get();
-        }
-        // Se não, você poderia ter uma tabela separada CompanyPhoneNumber para mapear múltiplos números para uma Company
-        // ou se o metaPhoneNumberId na Company for uma lista. Por agora, simplificado.
-        // Se sua entidade Company tiver um campo metaPhoneNumberId que pode não ser o primário, use-o:
-        // return companyRepository.findBySomeOtherMetaPhoneNumberIdField(metaPhoneNumberId).orElse(null);
-        log.warn("Nenhuma empresa encontrada com metaPrimaryPhoneNumberId: {}", metaPhoneNumberId);
-        return null;
-    }
+    // private Company findCompanyByMetaPhoneNumberId(String metaPhoneNumberId) { // Renomeado
+    //     if (metaPhoneNumberId == null || metaPhoneNumberId.isBlank()) {
+    //         log.trace("findCompanyByMetaPhoneNumberId chamado com ID nulo ou vazio.");
+    //         return null;
+    //     }
+    //     log.debug("Buscando empresa por metaPrimaryPhoneNumberId ou metaPhoneNumberId: {}", metaPhoneNumberId);
+    //     // Primeiro tenta pelo campo primário, depois por um campo genérico (se você tiver múltiplos números por empresa)
+    //     Optional<Company> company = companyRepository.findByMetaPrimaryPhoneNumberId(metaPhoneNumberId);
+    //     if (company.isPresent()) {
+    //         return company.get();
+    //     }
+    //     // Se não, você poderia ter uma tabela separada CompanyPhoneNumber para mapear múltiplos números para uma Company
+    //     // ou se o metaPhoneNumberId na Company for uma lista. Por agora, simplificado.
+    //     // Se sua entidade Company tiver um campo metaPhoneNumberId que pode não ser o primário, use-o:
+    //     // return companyRepository.findBySomeOtherMetaPhoneNumberIdField(metaPhoneNumberId).orElse(null);
+    //     log.warn("Nenhuma empresa encontrada com metaPrimaryPhoneNumberId: {}", metaPhoneNumberId);
+    //     return null;
+    // }
 
     @SuppressWarnings("static-access")
     private void extractMessageContentAndMetadata(JsonNode messageNode, WhatsAppMessageLog log) throws JsonProcessingException {
@@ -998,5 +1005,22 @@ public class WebhookServiceImpl implements WebhookService {
         } catch (Exception e) {
             log.error("Erro genérico ao salvar FlowData: {}", e.getMessage(), e);
         }
+    }
+
+    /**
+     * Busca o Canal (Número de Telefone) baseado no ID da Meta vindo no webhook.
+     * A partir do Canal, temos acesso à Empresa.
+     */
+    private WhatsAppPhoneNumber findChannelByMetaId(String metaPhoneNumberId) {
+        if (metaPhoneNumberId == null || metaPhoneNumberId.isBlank()) {
+            log.trace("findChannelByMetaId chamado com ID nulo ou vazio.");
+            return null;
+        }
+        
+        return phoneNumberRepository.findByPhoneNumberId(metaPhoneNumberId)
+                .orElseGet(() -> {
+                    log.warn("Nenhum canal encontrado com phoneNumberId: {}", metaPhoneNumberId);
+                    return null;
+                });
     }
 }

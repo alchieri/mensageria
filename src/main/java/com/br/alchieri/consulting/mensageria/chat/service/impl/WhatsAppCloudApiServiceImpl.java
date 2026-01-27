@@ -7,8 +7,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
@@ -60,14 +58,15 @@ import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.exception.ResourceNotFoundException;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.User;
+import com.br.alchieri.consulting.mensageria.model.WhatsAppPhoneNumber;
 import com.br.alchieri.consulting.mensageria.model.enums.Role;
 import com.br.alchieri.consulting.mensageria.repository.UserRepository;
+import com.br.alchieri.consulting.mensageria.repository.WhatsAppPhoneNumberRepository;
 import com.br.alchieri.consulting.mensageria.service.BillingService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import io.awspring.cloud.s3.S3Template;
 import lombok.RequiredArgsConstructor;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -86,9 +85,9 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
     private final TemplateParameterGenerator parameterGenerator;
     private final ObjectMapper objectMapper;
     private final MediaUploadRepository mediaUploadRepository;
-    private final S3Template s3Template;
     private final FlowRepository flowRepository;
     private final CatalogRepository catalogRepository;
+    private final WhatsAppPhoneNumberRepository phoneNumberRepository;
 
     // URL base global, o token será específico do cliente
     @Value("${whatsapp.graph-api.base-url}")
@@ -140,16 +139,26 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
                     return Mono.error(new BusinessException("Payload de produto vazio na fila."));
                 }
                 // Usa Mono.fromCallable para executar a busca do catálogo (bloqueante) em outra thread
-                return Mono.fromCallable(() -> buildSingleProductMetaRequest(queueRequest.getProductRequest(), company))
+                return Mono.fromCallable(() -> {
+                            // 1. Constrói o Request da Meta (Busca Catálogo no Banco)
+                            WhatsAppCloudApiRequest metaRequest = buildSingleProductMetaRequest(queueRequest.getProductRequest(), company);
+                            
+                            // 2. Resolve quem é o Remetente (Busca Telefone no Banco)
+                            WhatsAppPhoneNumber sender = resolveSenderNumber(company, queueRequest.getProductRequest().getFromPhoneNumberId());
+                            
+                            // Retorna o par (Request + Sender)
+                            return Map.entry(metaRequest, sender);
+                        })
                         .subscribeOn(Schedulers.boundedElastic())
-                        .flatMap(metaRequest -> 
+                        .flatMap(pair -> 
                             executeSendMessage(
-                                metaRequest, 
+                                pair.getKey(),
                                 user, 
-                                company, 
+                                company,
+                                pair.getValue(),
                                 "PRODUCT", 
                                 "Produto SKU: " + queueRequest.getProductRequest().getProductRetailerId(), 
-                                null // Scheduled ID se houver
+                                null
                             )
                         );
 
@@ -158,13 +167,21 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
                 if (queueRequest.getMultiProductRequest() == null) {
                     return Mono.error(new BusinessException("Payload de lista de produtos vazio na fila."));
                 }
-                return Mono.fromCallable(() -> buildMultiProductMetaRequest(queueRequest.getMultiProductRequest(), company))
-                        .subscribeOn(Schedulers.boundedElastic())
-                        .flatMap(metaRequest -> 
+                return Mono.fromCallable(() -> {
+                            // 1. Constrói o Request
+                            WhatsAppCloudApiRequest metaRequest = buildMultiProductMetaRequest(queueRequest.getMultiProductRequest(), company);
+                            
+                            // 2. Resolve o Sender
+                            WhatsAppPhoneNumber sender = resolveSenderNumber(company, queueRequest.getMultiProductRequest().getFromPhoneNumberId());
+                            
+                            return Map.entry(metaRequest, sender);
+                        }).subscribeOn(Schedulers.boundedElastic())
+                        .flatMap(pair -> 
                             executeSendMessage(
-                                metaRequest, 
+                                pair.getKey(),
                                 user, 
                                 company, 
+                                pair.getValue(),
                                 "PRODUCT_LIST", 
                                 "Lista: " + queueRequest.getMultiProductRequest().getHeaderText(), 
                                 null
@@ -204,12 +221,17 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
     public Mono<Void> sendTextMessage(SendTextMessageRequest request, User user) {
         
         Company company = getCompanyFromUser(user);
+
+        // 1. Determinar quem é o remetente
+        WhatsAppPhoneNumber senderNumber = resolveSenderNumber(company, request.getFromPhoneNumberId());
+
         if (!billingService.canCompanySendMessages(company, 1)) {
             logger.warn("Empresa ID {}: Limite de envio de mensagens excedido.", company.getId());
             return Mono.error(new BusinessException("Limite de envio de mensagens excedido."));
         }
+
         WhatsAppCloudApiRequest metaRequest = buildTextMetaRequest(request);
-        return executeSendMessage(metaRequest, user, company, "TEXT", request.getMessage(), null);
+        return executeSendMessage(metaRequest, user, company, senderNumber, "TEXT", request.getMessage(), null);
     }
 
     public Mono<Void> sendTemplateMessage(SendTemplateMessageRequest request, User user) {
@@ -221,88 +243,35 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
     public Mono<Void> sendTemplateMessage(SendTemplateMessageRequest request, User user, Long scheduledMessageId) {
         
         Company company = getCompanyFromUser(user);
+
+        WhatsAppPhoneNumber senderNumber = resolveSenderNumber(company, request.getFromPhoneNumberId());
+
         if (!billingService.canCompanySendMessages(company, 1)) {
             logger.warn("Empresa ID {}: Limite de envio de mensagens excedido.", company.getId());
             return Mono.error(new BusinessException("Limite de envio de mensagens excedido."));
         }
+
         Mono<WhatsAppCloudApiRequest> metaRequestMono = buildTemplateMetaRequest(request, company, user);
         return metaRequestMono.flatMap(metaRequest -> {
-            return executeSendMessage(metaRequest, user, company, "TEMPLATE", request.getTemplateName(), scheduledMessageId);
+            return executeSendMessage(metaRequest, user, company, senderNumber, "TEMPLATE", request.getTemplateName(), scheduledMessageId);
         });
     }
 
     @Override
-    public Mono<String> uploadMedia(MultipartFile file, String messagingProduct, User user) {
-        Company company = getCompanyFromUser(user);
-        
-        if (file == null || file.isEmpty()) {
-            return Mono.error(new IllegalArgumentException("Arquivo não pode ser vazio para upload."));
-        }
-
-        validateFileSize(file);
-
-        // 1. Gerar uma chave de objeto única para o S3
-        String objectKey = String.format("company-%d/user-%d/%s-%s",
-                                         company.getId(),
-                                         user.getId(),
-                                         UUID.randomUUID().toString(),
-                                         file.getOriginalFilename());
-
-        logger.info("Empresa ID {}: Preparando para fazer upload da mídia '{}' para o S3 com a chave: {}",
-                    company.getId(), file.getOriginalFilename(), objectKey);
-
-        // 2. Fazer upload para S3
-        Mono<Void> s3UploadMono = Mono.fromFuture(() -> {
-            try {
-                // O S3Template lida com o InputStream
-                s3Template.upload(s3MediaBucketName, objectKey, file.getInputStream());
-                return CompletableFuture.completedFuture(null);
-            } catch (IOException e) {
-                return CompletableFuture.failedFuture(new RuntimeException("Falha ao ler o arquivo para o S3.", e));
-            }
-        }).subscribeOn(Schedulers.boundedElastic()).then();
-
-
-        // 3. Fazer upload para a Meta (pode ser em paralelo)
-        Mono<String> metaUploadMono = uploadToMeta(file, messagingProduct, user);
-
-        // 4. Combinar os resultados e salvar no banco
-        return Mono.zip(s3UploadMono.then(Mono.just(objectKey)), metaUploadMono)
-            .flatMap(tuple -> {
-                String savedObjectKey = tuple.getT1();
-                String metaMediaId = tuple.getT2();
-
-                return Mono.fromCallable(() -> {
-                    MediaUpload mediaUpload = new MediaUpload();
-                    mediaUpload.setCompany(company);
-                    mediaUpload.setUploadedBy(user);
-                    mediaUpload.setMetaMediaId(metaMediaId);
-                    mediaUpload.setOriginalFilename(file.getOriginalFilename());
-                    mediaUpload.setContentType(file.getContentType());
-                    mediaUpload.setFileSize(file.getSize());
-                    mediaUpload.setS3BucketName(s3MediaBucketName); // Salva referência do S3
-                    mediaUpload.setS3ObjectKey(savedObjectKey);   // Salva referência do S3
-
-                    mediaUploadRepository.save(mediaUpload);
-                    logger.info("Empresa ID {}: Mídia salva no S3 ({}) e na Meta ({}) com sucesso. Registro no BD criado.",
-                                company.getId(), savedObjectKey, metaMediaId);
-                    return metaMediaId; // Retorna o mediaId para o cliente
-                }).subscribeOn(Schedulers.boundedElastic());
-            });
-    }
-
-    @Override
     public Mono<Void> sendMediaMessage(SendMediaMessageRequest request, User user) {
+
         Company company = getCompanyFromUser(user);
 
         if (!billingService.canCompanySendMessages(company, 1)) {
             return Mono.error(new BusinessException("Limite de envio de mensagens excedido."));
         }
 
+        WhatsAppPhoneNumber senderNumber = resolveSenderNumber(company, request.getFromPhoneNumberId());
+
         // Constrói o payload dinâmico baseado no tipo
         WhatsAppCloudApiRequest metaRequest = buildMediaMetaRequest(request);
 
-        return executeSendMessage(metaRequest, user, company, 
+        return executeSendMessage(metaRequest, user, company, senderNumber,
                 request.getType().toUpperCase(), 
                 "Envio de Mídia (" + request.getType() + "): " + request.getMediaId(), 
                 null);
@@ -351,12 +320,16 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
     public Mono<Void> sendInteractiveFlowMessage(SendInteractiveFlowMessageRequest request, User user) {
         
         Company company = getCompanyFromUser(user);
+
+        WhatsAppPhoneNumber senderNumber = resolveSenderNumber(company, request.getFromPhoneNumberId());
+
         if (!billingService.canCompanySendMessages(company, 1)) {
             return Mono.error(new BusinessException("Limite de envio de mensagens excedido."));
         }
+
         return buildInteractiveFlowMetaRequest(request)
                 .flatMap(metaRequest -> 
-                    executeSendMessage(metaRequest, user, company, "INTERACTIVE_FLOW", request.getFlowName(), null)
+                    executeSendMessage(metaRequest, user, company, senderNumber, "INTERACTIVE_FLOW", request.getFlowName(), null)
                 );
     }
 
@@ -369,10 +342,12 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
             return Mono.error(new BusinessException("Limite de envio de mensagens excedido."));
         }
 
+        WhatsAppPhoneNumber senderNumber = resolveSenderNumber(company, request.getFromPhoneNumberId());
+
         // Constrói o request de forma reativa (caso precise buscar algo no futuro)
         return Mono.fromCallable(() -> buildSingleProductMetaRequest(request, company))
                 .flatMap(metaRequest -> 
-                    executeSendMessage(metaRequest, currentUser, company, "PRODUCT", "Produto: " + request.getProductRetailerId(), null)
+                    executeSendMessage(metaRequest, currentUser, company, senderNumber, "PRODUCT", "Produto: " + request.getProductRetailerId(), null)
                 );
     }
 
@@ -381,13 +356,15 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
         
         Company company = getCompanyFromUser(currentUser);
 
+        WhatsAppPhoneNumber senderNumber = resolveSenderNumber(company, request.getFromPhoneNumberId());
+
         if (!billingService.canCompanySendMessages(company, 1)) {
             return Mono.error(new BusinessException("Limite de envio de mensagens excedido."));
         }
 
         return Mono.fromCallable(() -> buildMultiProductMetaRequest(request, company))
                 .flatMap(metaRequest -> 
-                    executeSendMessage(metaRequest, currentUser, company, "PRODUCT_LIST", "Lista de Produtos: " + request.getHeaderText(), null)
+                    executeSendMessage(metaRequest, currentUser, company, senderNumber, "PRODUCT_LIST", "Lista de Produtos: " + request.getHeaderText(), null)
                 );
     }
 
@@ -427,40 +404,78 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
         }
     }
 
-    // Método helper privado para o upload para a Meta (código que já tínhamos)
-    @SuppressWarnings("null")
-    private Mono<String> uploadToMeta(MultipartFile file, String messagingProduct, User user) {
-        
+    // Novo método na interface (ou helper interno) que aceita o ID do telefone
+    @Override
+    public Mono<MediaUpload> uploadMedia(MultipartFile file, String caption, User user, String requestedPhoneNumberId) {
         Company company = getCompanyFromUser(user);
-        WebClient bspWebClient = getBspWebClient();
-        String uploaderPhoneNumberId = getCompanyPhoneNumberId(company);
-        String endpoint = "/" + uploaderPhoneNumberId + "/media";
+        
+        // Validar tamanho/tipo do arquivo aqui se necessário...
 
-        MultipartBodyBuilder builder = new MultipartBodyBuilder();
-        builder.part("messaging_product", messagingProduct);
-        try {
-            builder.part("file", new InputStreamResource(file.getInputStream()))
-                   .filename(file.getOriginalFilename())
-                   .contentType(MediaType.parseMediaType(file.getContentType()));
-        } catch (IOException e) {
-            return Mono.error(new RuntimeException("Erro ao ler arquivo para upload na Meta.", e));
-        }
-
-        return bspWebClient.post().uri(endpoint).contentType(MediaType.MULTIPART_FORM_DATA)
-                .body(BodyInserters.fromMultipartData(builder.build())).retrieve()
-                .bodyToMono(JsonNode.class)
-                .map(responseNode -> {
-                    String mediaId = responseNode.path("id").asText(null);
-                    if (mediaId == null) throw new RuntimeException("Falha ao obter ID da mídia da Meta.");
-                    return mediaId;
+        // Faz o upload de forma reativa
+        return Mono.fromCallable(() -> uploadToMeta(file, company, requestedPhoneNumberId))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(metaMediaId -> {
+                    // Salva metadados no banco local
+                    MediaUpload media = new MediaUpload();
+                    media.setMetaMediaId(metaMediaId);
+                    media.setCompany(company);
+                    media.setOriginalFilename(caption);
+                    media.setContentType(file.getContentType());
+                    media.setOriginalFilename(file.getOriginalFilename());
+                    media.setFileSize(file.getSize());
+                    
+                    // Se quiser salvar no S3 também, faria aqui (ex: s3Template.upload...)
+                    
+                    return Mono.just(mediaUploadRepository.save(media));
                 });
     }
 
-    private Mono<Void> executeSendMessage(WhatsAppCloudApiRequest metaRequest, User user, Company company, String messageType, String contentReference, Long scheduledMessageId) {
+    // Método helper privado para o upload para a Meta
+    private String uploadToMeta(MultipartFile file, Company company, String requestedPhoneNumberId) {
         
-        String senderPhoneNumberId = getCompanyPhoneNumberId(company);
+        try {
+            // 1. Resolve qual número fará o upload (Padrão ou Específico)
+            WhatsAppPhoneNumber senderNumber = resolveSenderNumber(company, requestedPhoneNumberId);
+            
+            // 2. Monta a URL com o ID do telefone correto
+            String url = graphApiBaseUrl + "/" + senderNumber.getPhoneNumberId() + "/media";
+            
+            // 3. Prepara o corpo Multipart
+            MultipartBodyBuilder builder = new MultipartBodyBuilder();
+            builder.part("file", new InputStreamResource(file.getInputStream()))
+                    .header("Content-Disposition", "form-data; name=\"file\"; filename=\"" + file.getOriginalFilename() + "\"")
+                    .contentType(MediaType.parseMediaType(file.getContentType() != null ? file.getContentType() : "application/octet-stream"));
+            
+            builder.part("messaging_product", "whatsapp");
+
+            // 4. Executa o POST
+            JsonNode response = getBspWebClient().post()
+                    .uri(url)
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .body(BodyInserters.fromMultipartData(builder.build()))
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .block(); // Bloqueante pois está dentro de um Mono.fromCallable
+
+            if (response != null && response.has("id")) {
+                return response.get("id").asText();
+            } else {
+                throw new BusinessException("Falha ao obter ID da mídia na resposta da Meta.");
+            }
+
+        } catch (IOException e) {
+            logger.error("Erro de I/O ao ler arquivo para upload: {}", e.getMessage());
+            throw new BusinessException("Erro ao processar arquivo para upload.");
+        } catch (Exception e) {
+            logger.error("Erro no upload de mídia para a Meta: {}", e.getMessage());
+            throw new BusinessException("Falha no upload para a Meta: " + e.getMessage());
+        }
+    }
+
+    private Mono<Void> executeSendMessage(WhatsAppCloudApiRequest metaRequest, User user, Company company, WhatsAppPhoneNumber senderNumber, String messageType, String contentReference, Long scheduledMessageId) {
+        
         WebClient bspWebClient = getBspWebClient();
-        String endpoint = "/" + senderPhoneNumberId + "/messages";
+        String endpoint = "/" + senderNumber.getPhoneNumberId() + "/messages";
         String recipientPhoneNumber = metaRequest.getTo();
 
         try {
@@ -478,19 +493,19 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
         return bspWebClient.post().uri(endpoint).body(BodyInserters.fromValue(metaRequest)).retrieve()
                 .bodyToMono(JsonNode.class)
                 .flatMap(responseNode -> {
-                    saveSuccessMessageLog(responseNode, company, user, senderPhoneNumberId, recipientPhoneNumber,
+                    saveSuccessMessageLog(responseNode, company, user, senderNumber, recipientPhoneNumber,
                                           messageType, contentReference, scheduledMessageId);
                     billingService.recordMessagesSent(company, 1);
                     return Mono.empty();
                 })
                 .doOnError(WebClientResponseException.class, e -> {
-                    saveFailedMessageLog(company, user, senderPhoneNumberId, recipientPhoneNumber,
+                    saveFailedMessageLog(company, user, senderNumber, recipientPhoneNumber,
                                          messageType, contentReference, e.getStatusCode().value(), e.getResponseBodyAsString());
                 })
                 .then();
     }
 
-    private void saveSuccessMessageLog(JsonNode responseNode, Company company, User user, String sender, String recipientWaIdInput, String type, String contentReference, Long scheduledMessageId) {
+    private void saveSuccessMessageLog(JsonNode responseNode, Company company, User user, WhatsAppPhoneNumber sender, String recipientWaIdInput, String type, String contentReference, Long scheduledMessageId) {
         
         try {
             String wamid = responseNode.path("messages").get(0).path("id").asText(null);
@@ -505,7 +520,8 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
             log.setCompany(company);
             log.setUser(user);
             log.setDirection(MessageDirection.OUTGOING);
-            log.setSender(sender);
+            log.setSenderPhoneNumber(sender.getDisplayPhoneNumber());
+            log.setChannelId(sender.getPhoneNumberId());
             log.setRecipient(recipientWaIdInput);
             log.setMessageType(type.toUpperCase());
             log.setContent(contentReference);
@@ -518,14 +534,15 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
         }
     }
 
-    private void saveFailedMessageLog(Company company, User user, String sender, String recipient, String type, String contentReference, int httpStatus, String errorBody) {
+    private void saveFailedMessageLog(Company company, User user, WhatsAppPhoneNumber sender, String recipient, String type, String contentReference, int httpStatus, String errorBody) {
         
         try {
             WhatsAppMessageLog log = new WhatsAppMessageLog();
             log.setCompany(company);
             log.setUser(user);
             log.setDirection(MessageDirection.OUTGOING);
-            log.setSender(sender);
+            log.setSenderPhoneNumber(sender.getDisplayPhoneNumber());
+            log.setChannelId(sender.getPhoneNumberId());
             log.setRecipient(recipient);
             log.setMessageType(type.toUpperCase());
             log.setContent(contentReference);
@@ -778,13 +795,6 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
         return user.getCompany(); // Pode ser nulo para BSP_ADMIN
     }
 
-    private String getCompanyPhoneNumberId(Company company) {
-        if (company == null || company.getMetaPrimaryPhoneNumberId() == null || company.getMetaPrimaryPhoneNumberId().isBlank()) {
-            throw new BusinessException("Phone Number ID da Meta não configurado para a empresa.");
-        }
-        return company.getMetaPrimaryPhoneNumberId();
-    }
-
     private WebClient getBspWebClient() {
         if (bspSystemUserAccessToken == null || bspSystemUserAccessToken.isBlank()) {
             throw new BusinessException("Token de System User do BSP não configurado.");
@@ -959,5 +969,23 @@ public class WhatsAppCloudApiServiceImpl implements WhatsAppCloudApiService {
                 .findFirst()
                 .map(Catalog::getMetaCatalogId)
                 .orElseThrow(() -> new BusinessException("Catálogo ID não informado e nenhum catálogo padrão encontrado para a empresa."));
+    }
+
+    /**
+     * Lógica central para decidir qual número usar.
+     */
+    private WhatsAppPhoneNumber resolveSenderNumber(Company company, String requestedPhoneId) {
+
+        if (requestedPhoneId != null && !requestedPhoneId.isBlank()) {
+            // O usuário pediu um número específico. Verificar se pertence à empresa.
+            return phoneNumberRepository.findByCompanyAndPhoneNumberId(company, requestedPhoneId)
+                    .orElseThrow(() -> new BusinessException("O número de telefone informado não pertence à sua empresa ou não está cadastrado."));
+        } else {
+            // Tenta pegar o padrão
+            return phoneNumberRepository.findFirstByCompanyAndIsDefaultTrue(company)
+                    // Fallback: se não tiver default marcado, pega o primeiro da lista
+                    .or(() -> phoneNumberRepository.findByCompany(company).stream().findFirst())
+                    .orElseThrow(() -> new BusinessException("Nenhum número de WhatsApp configurado para esta empresa."));
+        }
     }
 }

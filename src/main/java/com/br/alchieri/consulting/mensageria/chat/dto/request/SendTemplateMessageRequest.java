@@ -43,5 +43,6 @@ public class SendTemplateMessageRequest {
     @Schema(description = "Componentes com parâmetros JÁ RESOLVIDOS. Usado para envio direto (com 'to') ou por jobs em massa/agendados.")
     private List<TemplateComponentRequest> resolvedComponents;
 
-    
+    @Schema(description = "ID do telefone (Meta ID) que enviará a mensagem. Se nulo, usa o padrão da empresa.", example = "10555...")
+    private String fromPhoneNumberId;
 }

@@ -68,7 +68,9 @@ public class MediaController {
             @Parameter(description = "Arquivo de mídia a ser carregado.", required = true, schema = @Schema(type = "string", format = "binary"))
             @RequestParam("file") MultipartFile file,
             @Parameter(description = "Produto de mensageria (geralmente 'whatsapp').", example = "whatsapp", schema = @Schema(type = "string", defaultValue = "whatsapp"))
-            @RequestParam(value = "messaging_product", defaultValue = "whatsapp") String product) {
+            @RequestParam(value = "messaging_product", defaultValue = "whatsapp") String product,
+            @Parameter(description = "ID do número de telefone (opcional).", example = "1234567890", schema = @Schema(type = "string"))
+            @RequestParam(value = "phone_number_id", required = false) String phoneNumberId) {
 
         // 1. Obter o usuário autenticado
         User currentUser = securityUtils.getAuthenticatedUser();
@@ -82,12 +84,12 @@ public class MediaController {
 
         try {
             // 2. Chamar o método de serviço, passando o usuário
-            String mediaId = whatsAppCloudApiService.uploadMedia(file, product, currentUser).block(BLOCK_TIMEOUT);
+            MediaUpload mediaUpload = whatsAppCloudApiService.uploadMedia(file, product, currentUser, phoneNumberId).block(BLOCK_TIMEOUT);
 
-            if (mediaId == null) {
-                throw new RuntimeException("ID da mídia não retornado pelo serviço de upload.");
+            if (mediaUpload == null) {
+                throw new RuntimeException("Mídia não retornada pelo serviço de upload.");
             }
-            return ResponseEntity.ok(new ApiResponse(true, "Upload de mídia bem-sucedido.", Map.of("mediaId", mediaId)));
+            return ResponseEntity.ok(new ApiResponse(true, "Upload de mídia bem-sucedido.", Map.of("mediaId", mediaUpload.getId())));
 
         } catch (WebClientResponseException e) {
             logger.error("Erro da API Meta (WebClientResponseException) no upload para o Usuário ID {}: Status={}, Body={}",

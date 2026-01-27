@@ -10,6 +10,7 @@ import com.br.alchieri.consulting.mensageria.chat.dto.request.SendProductMessage
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendTemplateMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendTextMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.dto.response.MessageStatusResponse;
+import com.br.alchieri.consulting.mensageria.chat.model.MediaUpload;
 import com.br.alchieri.consulting.mensageria.model.User;
 
 import reactor.core.publisher.Mono;
@@ -22,7 +23,7 @@ public interface WhatsAppCloudApiService {
     Mono<Void> sendTemplateMessage(SendTemplateMessageRequest request, User user, Long scheduledMessageId);
     Mono<Void> sendInteractiveFlowMessage(SendInteractiveFlowMessageRequest request, User user);
 
-    Mono<String> uploadMedia(MultipartFile file, String messagingProduct, User user);
+    Mono<MediaUpload> uploadMedia(MultipartFile file, String messagingProduct, User user, String phoneNumberId);
 
     Mono<Void> sendMediaMessage(SendMediaMessageRequest request, User user);
 
