@@ -2,7 +2,6 @@ package com.br.alchieri.consulting.mensageria.chat.service.impl;
 
 import java.time.LocalTime;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 import org.springframework.stereotype.Service;
@@ -26,17 +25,11 @@ import com.br.alchieri.consulting.mensageria.chat.repository.ClientTemplateRepos
 import com.br.alchieri.consulting.mensageria.chat.repository.FlowRepository;
 import com.br.alchieri.consulting.mensageria.chat.service.BotEngineService;
 import com.br.alchieri.consulting.mensageria.chat.service.WhatsAppCloudApiService;
-import com.br.alchieri.consulting.mensageria.dto.cart.CartDTO;
-import com.br.alchieri.consulting.mensageria.dto.cart.CartItemDTO;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.User;
 import com.br.alchieri.consulting.mensageria.model.WhatsAppPhoneNumber;
-import com.br.alchieri.consulting.mensageria.model.cart.Order;
 import com.br.alchieri.consulting.mensageria.model.enums.ConversationState;
-import com.br.alchieri.consulting.mensageria.model.enums.PaymentMethod;
 import com.br.alchieri.consulting.mensageria.model.redis.UserSession;
-import com.br.alchieri.consulting.mensageria.payment.service.PaymentService;
-import com.br.alchieri.consulting.mensageria.service.impl.CartServiceImpl;
 import com.br.alchieri.consulting.mensageria.service.impl.SessionService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -58,8 +51,7 @@ public class BotEngineServiceImpl implements BotEngineService {
 
     private final WhatsAppCloudApiService whatsAppService;
     private final SessionService sessionService;
-    private final CartServiceImpl cartService;
-    private final PaymentService paymentService;
+    private final CommerceFlowHandler commerceHandler;
 
     private final ObjectMapper objectMapper;
 
@@ -86,22 +78,40 @@ public class BotEngineServiceImpl implements BotEngineService {
         
         String state = session.getCurrentState();
 
-        if (ConversationState.CONFIRMING_ORDER.name().equals(state)) {
-            handleOrderConfirmation(input, contact, session, systemUser, channel);
-            return;
-        } else if (ConversationState.SELECTING_PAYMENT_METHOD.name().equals(state)) {
-            handlePaymentSelection(input, contact, session, systemUser, channel);
-            return;
-        } else if (ConversationState.WAITING_PAYMENT_CONFIRMATION.name().equals(state)) {
-            handlePaymentConfirmationWait(input, contact, session, systemUser, channel);
+        if (isCommerceState(state)) {
+            dispatchToCommerceHandler(state, input, contact, session, systemUser, channel);
             return;
         }
 
         if ("CHECKOUT_TRIGGER".equals(input)) {
-            handleCheckoutTrigger(contact, session, systemUser, channel);
+            commerceHandler.startCheckoutFlow(contact, session, systemUser, channel);
             return;
         }
 
+        processStandardBotFlow(input, contact, session, systemUser, channel);
+    }
+
+    private boolean isCommerceState(String state) {
+        
+        return ConversationState.CONFIRMING_ORDER.name().equals(state) ||
+               ConversationState.SELECTING_PAYMENT_METHOD.name().equals(state) ||
+               ConversationState.WAITING_PAYMENT_CONFIRMATION.name().equals(state);
+    }
+
+    private void dispatchToCommerceHandler(String state, String input, Contact contact, UserSession session, User user, WhatsAppPhoneNumber channel) {
+        
+        if (ConversationState.CONFIRMING_ORDER.name().equals(state)) {
+            commerceHandler.processOrderConfirmation(input, contact, session, user, channel);
+        } else if (ConversationState.SELECTING_PAYMENT_METHOD.name().equals(state)) {
+            commerceHandler.processPaymentSelection(input, contact, session, user, channel);
+        } else if (ConversationState.WAITING_PAYMENT_CONFIRMATION.name().equals(state)) {
+            commerceHandler.processPaymentWait(input, contact, session, user, channel);
+        }
+    }
+
+    // --- EXECUÇÃO PADRÃO DO BOT ---
+
+    private void processStandardBotFlow(String input, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
         Long stepId = session.getCurrentStepId();
         BotStep currentStep = botStepRepository.findById(stepId).orElse(null);
 
@@ -118,7 +128,7 @@ public class BotEngineServiceImpl implements BotEngineService {
             BotOption selectedOption = match.get();
             
             if (selectedOption.isHandoff()) {
-                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Transferindo para um atendente...", channel), systemUser).subscribe();
+                sendText(contact, "Transferindo para um atendente...", channel, systemUser);
                 executeHandoffStep(currentStep, contact, session, systemUser, channel); 
             } else if (selectedOption.getTargetStep() != null) {
                 executeStep(selectedOption.getTargetStep(), contact, session, systemUser, channel);
@@ -126,16 +136,11 @@ public class BotEngineServiceImpl implements BotEngineService {
                 sessionService.resetSession(session);
             }
         } else {
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Opção inválida. Tente novamente.", channel), systemUser).subscribe();
+            sendText(contact, "Opção inválida. Tente novamente.", channel, systemUser);
         }
     }
 
-    // --- EXECUÇÃO DE PASSOS ---
-
     private void executeStep(BotStep step, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
-        
-        log.info("Executando passo bot: ID={}, Tipo={}, Contato={}", step.getId(), step.getStepType(), contact.getPhoneNumber());
-
         session.setCurrentStepId(step.getId());
         sessionService.saveSession(session);
 
@@ -149,30 +154,26 @@ public class BotEngineServiceImpl implements BotEngineService {
                 case END -> executeEndStep(step, contact, session, systemUser, channel);
                 default -> {
                     log.warn("Tipo de passo desconhecido: {}", step.getStepType());
-                    whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Erro: Tipo de passo não suportado.", channel), systemUser).subscribe();
+                    sendText(contact, "Erro: Tipo de passo não suportado.", channel, systemUser);
                 }
             }
         } catch (Exception e) {
             log.error("Erro crítico ao executar passo do bot ID {}: {}", step.getId(), e.getMessage(), e);
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Desculpe, ocorreu um erro técnico no bot.", channel), systemUser).subscribe();
+            sendText(contact, "Desculpe, ocorreu um erro técnico no bot.", channel, systemUser);
         }
     }
 
     private void executeTextStep(BotStep step, Contact contact, User systemUser, WhatsAppPhoneNumber channel) {
         
         StringBuilder body = new StringBuilder(step.getContent());
-
         if (step.getOptions() != null && !step.getOptions().isEmpty()) {
             body.append("\n\n");
             step.getOptions().sort((a, b) -> Integer.compare(a.getSequence(), b.getSequence()));
-
             for (BotOption opt : step.getOptions()) {
-                String displayKey = opt.getKeyword();
-                body.append("👉 *").append(displayKey).append("* - ").append(opt.getLabel()).append("\n");
+                body.append("👉 *").append(opt.getKeyword()).append("* - ").append(opt.getLabel()).append("\n");
             }
         }
-
-        whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), body.toString(), channel), systemUser).subscribe();
+        sendText(contact, body.toString(), channel, systemUser);
     }
 
     private void executeFlowStep(BotStep step, Contact contact, User systemUser, WhatsAppPhoneNumber channel) throws JsonProcessingException {
@@ -181,19 +182,15 @@ public class BotEngineServiceImpl implements BotEngineService {
         Flow flow = flowRepository.findById(flowId).orElse(null);
         
         if (flow == null || flow.getStatus() != FlowStatus.PUBLISHED) {
-            log.error("Flow ID {} não encontrado ou não publicado.", flowId);
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Erro técnico: Fluxo indisponível.", channel), systemUser).subscribe();
+            sendText(contact, "Erro técnico: Fluxo indisponível.", channel, systemUser);
             return;
         }
 
-        String metadataJson = step.getMetadata();
-        
         SendInteractiveFlowMessageRequest request = new SendInteractiveFlowMessageRequest();
         request.setTo(contact.getPhoneNumber());
         request.setFromPhoneNumberId(channel.getPhoneNumberId());
         request.setFlowName(flow.getName());
         request.setFlowToken("BOT_STEP_" + step.getId());
-        
         request.setFlowAction("navigate");
         request.setMode("published");
         request.setBodyText("Por favor, preencha os dados abaixo.");
@@ -202,17 +199,13 @@ public class BotEngineServiceImpl implements BotEngineService {
         SendInteractiveFlowMessageRequest.FlowActionPayload flowActionPayload = new SendInteractiveFlowMessageRequest.FlowActionPayload();
         flowActionPayload.setScreen("SUCCESS");
 
-        if (metadataJson != null && !metadataJson.isBlank()) {
-            JsonNode metaNode = objectMapper.readTree(metadataJson);
+        if (step.getMetadata() != null && !step.getMetadata().isBlank()) {
+            JsonNode metaNode = objectMapper.readTree(step.getMetadata());
             if (metaNode.has("header")) request.setHeaderText(metaNode.path("header").asText());
             if (metaNode.has("body")) request.setBodyText(metaNode.path("body").asText());
             if (metaNode.has("footer")) request.setFooterText(metaNode.path("footer").asText());
             if (metaNode.has("cta_label")) request.setFlowCta(metaNode.path("cta_label").asText());
             if (metaNode.has("screen_id")) flowActionPayload.setScreen(metaNode.path("screen_id").asText());
-            if (metaNode.has("data")) {
-                 Map<String, Object> dataMap = objectMapper.convertValue(metaNode.path("data"), new TypeReference<Map<String, Object>>() {});
-                 flowActionPayload.setData(dataMap);
-            }
         }
         
         request.setFlowActionPayload(flowActionPayload);
@@ -225,24 +218,18 @@ public class BotEngineServiceImpl implements BotEngineService {
         ClientTemplate template = templateRepository.findById(templateId).orElse(null);
         
         if (template == null || !"APPROVED".equalsIgnoreCase(template.getStatus())) {
-            log.error("Template ID {} inválido.", templateId);
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Erro técnico: Template indisponível.", channel), systemUser).subscribe();
+            sendText(contact, "Erro técnico: Template indisponível.", channel, systemUser);
             return;
         }
 
-        String metadataJson = step.getMetadata();
-
         SendTemplateMessageRequest request = new SendTemplateMessageRequest();
         request.setTo(contact.getPhoneNumber());
-        request.setFromPhoneNumberId(channel.getPhoneNumberId()); // IMPORTANTE
+        request.setFromPhoneNumberId(channel.getPhoneNumberId());
         request.setTemplateName(template.getTemplateName());
         request.setLanguageCode(template.getLanguage());
 
-        if (metadataJson != null && !metadataJson.isBlank()) {
-            JsonNode metaNode = objectMapper.readTree(metadataJson);
-            if (metaNode.has("language")) {
-                request.setLanguageCode(metaNode.path("language").asText());
-            }
+        if (step.getMetadata() != null && !step.getMetadata().isBlank()) {
+            JsonNode metaNode = objectMapper.readTree(step.getMetadata());
             if (metaNode.has("components")) {
                 List<TemplateComponentRequest> components = objectMapper.convertValue(
                     metaNode.get("components"),
@@ -251,7 +238,6 @@ public class BotEngineServiceImpl implements BotEngineService {
                 request.setResolvedComponents(components);
             }
         }
-
         whatsAppService.sendTemplateMessage(request, systemUser, null).subscribe();
     }
 
@@ -269,180 +255,33 @@ public class BotEngineServiceImpl implements BotEngineService {
         
         SendMediaMessageRequest req = new SendMediaMessageRequest();
         req.setTo(contact.getPhoneNumber());
-        req.setFromPhoneNumberId(channel.getPhoneNumberId()); // IMPORTANTE
+        req.setFromPhoneNumberId(channel.getPhoneNumberId());
         req.setType(type);
         req.setMediaId(mediaId);
         req.setCaption(caption);
-        
         whatsAppService.sendMediaMessage(req, systemUser).subscribe();
     }
 
     private void executeHandoffStep(BotStep step, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
         
         String message = step.getContent();
-        if (message == null || message.isBlank()) {
-            message = "Aguarde um momento, estamos transferindo para um atendente humano.";
-        }
+        if (message == null || message.isBlank()) message = "Aguarde um momento.";
         
-        whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), message, channel), systemUser).subscribe();
+        sendText(contact, message, channel, systemUser);
         
         sessionService.updateState(session, ConversationState.IN_SERVICE_HUMAN);
         session.setBotActive(false);
         session.setCurrentBotId(null);
         session.setCurrentStepId(null);
         sessionService.saveSession(session);
-        log.info("Transbordo realizado para contato {}", contact.getPhoneNumber());
     }
 
     private void executeEndStep(BotStep step, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
         
-        String message = step.getContent();
-        if (message != null && !message.isBlank()) {
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), message, channel), systemUser).subscribe();
+        if (step.getContent() != null && !step.getContent().isBlank()) {
+            sendText(contact, step.getContent(), channel, systemUser);
         }
         sessionService.resetSession(session);
-    }
-
-    // --- CHECKOUT / CARRINHO ---
-
-    private void handleCheckoutTrigger(Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
-        
-        CartDTO cart = session.getCart();
-        if (cart.isEmpty()) {
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Seu carrinho está vazio.", channel), systemUser).subscribe();
-            return;
-        }
-
-        StringBuilder sb = new StringBuilder("🛒 *Resumo do Pedido:*\n\n");
-        for (CartItemDTO item : cart.getItems()) {
-            sb.append(String.format("- %dx %s (Total: %s)\n", item.getQuantity(), item.getName(), item.getTotal()));
-        }
-        sb.append("\n💰 *Total Geral: " + cart.getTotalAmount() + "*\n");
-        sb.append("\nDeseja finalizar o pedido? Digite *Sim* para confirmar ou *Não* para cancelar.");
-
-        whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), sb.toString(), channel), systemUser).subscribe();
-        
-        sessionService.updateState(session, ConversationState.CONFIRMING_ORDER);
-    }
-
-    private void handleOrderConfirmation(String input, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
-        
-        if (input.toLowerCase().contains("sim")) {
-            try {
-                Order order = cartService.checkout(session, contact, channel);
-                
-                session.addContextData("current_order_id", order.getId().toString());
-
-                String msg = "✅ Pedido #" + order.getId() + " gerado!\n\n"
-                           + "Como deseja pagar?\n"
-                           + "1️⃣ Pix (Aprovação Imediata)\n"
-                           + "2️⃣ Cartão de Crédito / Link";
-                
-                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), msg, channel), systemUser).subscribe();
-                
-                sessionService.updateState(session, ConversationState.SELECTING_PAYMENT_METHOD);
-                
-            } catch (Exception e) {
-                log.error("Erro no checkout", e);
-                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Ocorreu um erro ao processar seu pedido. Tente novamente.", channel), systemUser).subscribe();
-            }
-        } else if (input.toLowerCase().contains("não") || input.toLowerCase().contains("nao")) {
-            session.getCart().clear();
-            sessionService.saveSession(session);
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Pedido cancelado.", channel), systemUser).subscribe();
-            sessionService.resetSession(session);
-        } else {
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Por favor, responda com Sim ou Não.", channel), systemUser).subscribe();
-        }
-    }
-
-    private void handlePaymentSelection(String input, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
-        
-        String orderIdStr = session.getContextData("current_order_id");
-        if (orderIdStr == null) {
-            sessionService.resetSession(session);
-            return;
-        }
-        Long orderId = Long.parseLong(orderIdStr);
-
-        String option = input.trim();
-        Order updatedOrder = null;
-
-        try {
-            if (option.equals("1") || option.toLowerCase().contains("pix")) {
-                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Gerando Pix... aguarde.", channel), systemUser).subscribe();
-                
-                updatedOrder = paymentService.generatePayment(orderId, PaymentMethod.PIX);
-                
-                String pixMsg = "Aqui está seu código Pix Copia e Cola 👇";
-                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), pixMsg, channel), systemUser).subscribe();
-                
-                // Manda o código puro em outra mensagem
-                String pixCode = updatedOrder.getPixCopyPaste();
-                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), pixCode, channel), systemUser).subscribe();
-
-                // [UX] Salva o código na sessão para reenvio se necessário
-                session.addContextData("last_pix_code", pixCode);
-
-            } else if (option.equals("2") || option.toLowerCase().contains("cartao") || option.toLowerCase().contains("link")) {
-                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Gerando Link... aguarde.", channel), systemUser).subscribe();
-                
-                updatedOrder = paymentService.generatePayment(orderId, PaymentMethod.CREDIT_CARD_LINK);
-                
-                String paymentUrl = updatedOrder.getPaymentUrl();
-                String linkMsg = "Clique no link abaixo para pagar com Cartão: 👇\n" + paymentUrl;
-                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), linkMsg, channel), systemUser).subscribe();
-
-                // [UX] Salva o link na sessão
-                session.addContextData("last_payment_link", paymentUrl);
-
-            } else {
-                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Opção inválida. Digite 1 (Pix) ou 2 (Cartão).", channel), systemUser).subscribe();
-                return; 
-            }
-            
-            // [UX IMPROVEMENT] Não reseta a sessão imediatamente. Entra em espera.
-            String instructions = "Fico no aguardo da confirmação! \n\n"
-                                + "🔄 Se precisar do código novamente, digite *Pix* ou *Link*.\n"
-                                + "❌ Para encerrar o atendimento, digite *Sair*.";
-            
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), instructions, channel), systemUser).subscribe();
-            
-            sessionService.updateState(session, ConversationState.WAITING_PAYMENT_CONFIRMATION);
-
-        } catch (Exception e) {
-            log.error("Erro ao gerar pagamento", e);
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Erro ao gerar pagamento. Tente novamente mais tarde.", channel), systemUser).subscribe();
-            sessionService.resetSession(session);
-        }
-    }
-
-    private void handlePaymentConfirmationWait(String input, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
-        String lowerInput = input.toLowerCase().trim();
-
-        if (lowerInput.contains("pix") || lowerInput.contains("codigo") || lowerInput.contains("copia")) {
-            String lastPix = session.getContextData("last_pix_code");
-            if (lastPix != null) {
-                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Aqui está o código novamente:", channel), systemUser).subscribe();
-                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), lastPix, channel), systemUser).subscribe();
-            } else {
-                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Não encontrei um código Pix recente. Tente gerar novamente.", channel), systemUser).subscribe();
-            }
-        } else if (lowerInput.contains("link") || lowerInput.contains("cartao") || lowerInput.contains("pagar")) {
-            String lastLink = session.getContextData("last_payment_link");
-             if (lastLink != null) {
-                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Aqui está o link novamente: " + lastLink, channel), systemUser).subscribe();
-            } else {
-                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Não encontrei um link de pagamento recente.", channel), systemUser).subscribe();
-            }
-        } else if (lowerInput.contains("sair") || lowerInput.contains("cancelar") || lowerInput.contains("encerrar")) {
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Atendimento encerrado. Obrigado e volte sempre!", channel), systemUser).subscribe();
-            sessionService.resetSession(session);
-        } else if (lowerInput.contains("já paguei") || lowerInput.contains("ja paguei") || lowerInput.contains("confirmar")) {
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Obrigado! Assim que o sistema bancário confirmar, você receberá a notificação aqui automaticamente.", channel), systemUser).subscribe();
-        } else {
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Ainda aguardando o pagamento. Digite *Pix* para ver o código ou *Sair* para finalizar.", channel), systemUser).subscribe();
-        }
     }
 
     // --- HELPERS ---
@@ -464,14 +303,14 @@ public class BotEngineServiceImpl implements BotEngineService {
         return input.trim().equalsIgnoreCase(keyword.trim());
     }
 
-    private SendTextMessageRequest createReq(String to, String body, WhatsAppPhoneNumber channel) {
+    private void sendText(Contact contact, String msg, WhatsAppPhoneNumber channel, User user) {
         
         SendTextMessageRequest req = new SendTextMessageRequest();
-        req.setTo(to);
-        req.setMessage(body);
+        req.setTo(contact.getPhoneNumber());
+        req.setMessage(msg);
         if (channel != null) {
             req.setFromPhoneNumberId(channel.getPhoneNumberId());
         }
-        return req;
+        whatsAppService.sendTextMessage(req, user).subscribe();
     }
 }
