@@ -23,6 +23,7 @@ public class CompanyInfoResponse {
     private boolean enabled;
     private List<PhoneNumberSummary> phoneNumbers;
     private List<BusinessManagerSummary> businessManagers;
+    private Integer botSessionTtl;
     // Adicionar outros campos se necessário
 
     public static CompanyInfoResponse fromEntity(Company company) {
@@ -49,6 +50,7 @@ public class CompanyInfoResponse {
                     summary.setStatus(phoneNumber.getStatus());
                     return summary;
                 }).toList())
+                .botSessionTtl(company.getBotSessionTtl())
                 .build();
     }
 

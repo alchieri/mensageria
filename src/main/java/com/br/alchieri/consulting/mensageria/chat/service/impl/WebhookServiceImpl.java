@@ -570,7 +570,7 @@ public class WebhookServiceImpl implements WebhookService {
         if (companyAssociatedWithWebhook != null) {
             try {
                 
-                UserSession session = sessionService.getSession(companyAssociatedWithWebhook.getId(), contact.getPhoneNumber());
+                UserSession session = sessionService.getSession(companyAssociatedWithWebhook, contact.getPhoneNumber());
                 User systemUser = getSystemUserForCompany(companyAssociatedWithWebhook);
                 
                 String botInput = extractContentForBot(messageNode, type);

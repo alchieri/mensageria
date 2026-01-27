@@ -48,4 +48,7 @@ public class UpdateCompanyRequest {
 
     @Schema(description = "Novo ID do Catálogo no Gerenciador de Comércio da Meta para esta empresa.")
     private String metaCatalogId;
+
+    @Schema(description = "Tempo de inatividade (em minutos) para expirar a sessão do bot.", example = "30")
+    private Integer botSessionTtl;
 }

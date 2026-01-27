@@ -27,6 +27,7 @@ public class CompanyDetailsResponse {
     private String contactPhoneNumber;
     private AddressRequestDTO address;
     private boolean enabled;
+    private Integer botSessionTtl;
 
     // Meta Config
     private String metaFlowPublicKeyId;
@@ -60,6 +61,7 @@ public class CompanyDetailsResponse {
                 .contactPhoneNumber(company.getContactPhoneNumber())
                 .address(AddressRequestDTO.fromEntity(company.getAddress()))
                 .enabled(company.isEnabled())
+                .botSessionTtl(company.getBotSessionTtl())
                 .metaFlowPublicKeyId(company.getMetaFlowPublicKeyId())
                 .generalCallbackUrl(company.getGeneralCallbackUrl())
                 .templateStatusCallbackUrl(company.getTemplateStatusCallbackUrl())
@@ -98,6 +100,7 @@ public class CompanyDetailsResponse {
         private String fullName;
         private String email;
         private boolean enabled;
+        private Integer botSessionTtl;
 
         public static UserSummaryResponse fromEntity(User user) {
             if (user == null) return null;

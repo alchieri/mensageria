@@ -26,4 +26,6 @@ public class CreateCompanyRequest {
     @Schema(defaultValue = "NOT_STARTED")
     private OnboardingStatus onboardingStatus = OnboardingStatus.NOT_STARTED;
     private Boolean enabled = true;
+    @Schema(description = "Tempo de inatividade (em minutos) para expirar a sessão do bot.", example = "30")
+    private Integer botSessionTtl;
 }

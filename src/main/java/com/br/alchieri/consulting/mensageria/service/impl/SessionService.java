@@ -8,9 +8,11 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
+import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.User;
 import com.br.alchieri.consulting.mensageria.model.enums.ConversationState;
 import com.br.alchieri.consulting.mensageria.model.redis.UserSession;
+import com.br.alchieri.consulting.mensageria.repository.CompanyRepository;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,35 +24,51 @@ public class SessionService {
 
     private final RedisTemplate<String, Object> redisTemplate;
 
+    private final CompanyRepository companyRepository;
+
     @Value("${app.session.ttl-minutes}")
     private long sessionTtlMinutes;
 
-    private static final String KEY_PREFIX = "session:";
+    private static final String KEY_PREFIX = "whatsapp:session:";
 
     /**
      * Recupera a sessão ou cria uma nova (Estado IDLE) se não existir.
      */
-    public UserSession getSession(Long companyId, String phoneNumber) {
+    public UserSession getSession(Company company, String phoneNumber) {
         
-        String key = buildKey(companyId, phoneNumber);
+        String key = buildKey(company.getId(), phoneNumber);
         UserSession session = (UserSession) redisTemplate.opsForValue().get(key);
 
         if (session == null) {
             log.debug("Nova sessão iniciada para {}", phoneNumber);
             session = UserSession.builder()
-                    .companyId(companyId)
+                    .companyId(company.getId())
                     .phoneNumber(phoneNumber)
                     .currentState(ConversationState.IDLE.name())
                     .botActive(true)
                     .build();
             saveSession(session);
+        } else {
+            refreshSessionTtl(key, company.getId());
         }
         return session;
     }
 
     public void saveSession(UserSession session) {
+
         String key = buildKey(session.getCompanyId(), session.getPhoneNumber());
+
+        long ttlMinutes = getCompanyTtl(session.getCompanyId());
+
         redisTemplate.opsForValue().set(key, session, Duration.ofMinutes(sessionTtlMinutes));
+
+        log.debug("Sessão salva para {} (Empresa {}) com TTL de {} min.", 
+                session.getPhoneNumber(), session.getCompanyId(), ttlMinutes);
+    }
+
+    private void refreshSessionTtl(String key, Long companyId) {
+        long ttlMinutes = getCompanyTtl(companyId);
+        redisTemplate.expire(key, Duration.ofMinutes(ttlMinutes));
     }
 
     /**
@@ -61,7 +79,7 @@ public class SessionService {
         // Normaliza o telefone para garantir match com a chave do Redis
         // (Assumindo que sua lógica de normalização já foi feita antes, ou pode aplicar aqui)
         
-        UserSession session = getSession(user.getCompany().getId(), phoneNumber);
+        UserSession session = getSession(user.getCompany(), phoneNumber);
 
         // Se tiver um atendente atribuído E não for o usuário atual
         if (session.getAssignedUserId() != null && !session.getAssignedUserId().equals(user.getId())) {
@@ -115,6 +133,7 @@ public class SessionService {
     public void updateState(UserSession session, ConversationState newState) {
         
         session.setCurrentState(newState.name());
+        session.setUpdatedAt(LocalDateTime.now());
         saveSession(session);
         log.debug("Estado atualizado para {} (User: {})", newState, session.getPhoneNumber());
     }
@@ -126,8 +145,16 @@ public class SessionService {
         
         session.setCurrentState(ConversationState.IDLE.name());
         session.getContextData().clear();
+        session.setUpdatedAt(LocalDateTime.now());
         saveSession(session);
         log.info("Sessão resetada para IDLE (User: {})", session.getPhoneNumber());
+    }
+
+    private long getCompanyTtl(Long companyId) {
+        return companyRepository.findById(companyId)
+                .map(Company::getBotSessionTtl)
+                .map(Integer::longValue)
+                .orElse(sessionTtlMinutes);
     }
 
     private String buildKey(Long companyId, String phoneNumber) {

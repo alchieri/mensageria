@@ -120,6 +120,11 @@ public class Company {
     @OneToMany(mappedBy = "company", cascade = CascadeType.ALL)
     private List<MetaBusinessManager> businessManagers = new ArrayList<>();
 
+    // Configuração de TTL da Sessão do Bot (em Minutos)
+    // Default: 30 minutos
+    @Column(name = "bot_session_ttl", nullable = false)
+    private Integer botSessionTtl = 30;
+
     @Column(nullable = false, updatable = false)
     @CreationTimestamp
     private LocalDateTime createdAt;

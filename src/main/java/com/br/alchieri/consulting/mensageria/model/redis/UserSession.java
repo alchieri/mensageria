@@ -1,9 +1,14 @@
 package com.br.alchieri.consulting.mensageria.model.redis;
 
 import java.io.Serializable;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
+import jakarta.persistence.Column;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -30,7 +35,14 @@ public class UserSession implements Serializable {
     private String assignedUserName;    // Nome do atendente (para exibir rápido no front)
     private String assignedUserEmail;   // Email do atendente
     private String assignmentTime;      // Quando o atendimento começou (ISO String)
-    
+
+    @Column(nullable = false, updatable = false)
+    @CreationTimestamp
+    private LocalDateTime createdAt;
+
+    @UpdateTimestamp
+    private LocalDateTime updatedAt;
+
     // --- CONTEXTO ---
     @Builder.Default
     private Map<String, String> contextData = new HashMap<>();
