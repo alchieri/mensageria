@@ -40,6 +40,8 @@ import com.br.alchieri.consulting.mensageria.dto.response.ApiResponse;
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.exception.ResourceNotFoundException;
 import com.br.alchieri.consulting.mensageria.model.Company;
+import com.br.alchieri.consulting.mensageria.model.WhatsAppPhoneNumber;
+import com.br.alchieri.consulting.mensageria.repository.WhatsAppPhoneNumberRepository;
 import com.br.alchieri.consulting.mensageria.service.BillingService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -56,8 +58,11 @@ import reactor.core.publisher.Mono;
 public class FlowServiceImpl implements FlowService {
 
     private final FlowRepository flowRepository;
+    private final WhatsAppPhoneNumberRepository phoneNumberRepository;
+
     private final WebClient.Builder webClientBuilder;
     private final ObjectMapper objectMapper;
+    
     private final BillingService billingService;
 
     @Value("${whatsapp.graph-api.base-url}")
@@ -86,11 +91,10 @@ public class FlowServiceImpl implements FlowService {
     @Override
     @Transactional
     public Mono<Flow> createFlow(FlowRequest request, Company company, boolean publish) {
-        if (company.getMetaWabaId() == null) {
-            return Mono.error(new BusinessException("Empresa não tem um WABA ID configurado."));
-        }
+        
+        String wabaId = resolveWabaId(company);
 
-        String endpoint = "/" + company.getMetaWabaId() + "/flows";
+        String endpoint = "/" + wabaId + "/flows";
         String normalizedMetaName = normalizeMetaName(request.getName());
 
         String flowJsonString;
@@ -112,7 +116,7 @@ public class FlowServiceImpl implements FlowService {
             "publish", publish
         );
 
-        log.info("Criando Flow '{}' na Meta para WABA {}", normalizedMetaName, company.getMetaWabaId());
+        log.info("Criando Flow '{}' na Meta para WABA {}", normalizedMetaName, wabaId);
 
         return getBspWebClient().post().uri(endpoint).body(BodyInserters.fromValue(metaRequestBody)).retrieve()
             .onStatus(HttpStatusCode::isError, clientResponse ->
@@ -497,11 +501,10 @@ public class FlowServiceImpl implements FlowService {
     @Override
     @Transactional
     public Mono<FlowSyncResponse> syncFlowsFromMeta(Company company) {
-        if (company.getMetaWabaId() == null) {
-            return Mono.error(new BusinessException("Empresa não tem um WABA ID configurado para sincronizar Flows."));
-        }
+        
+        String wabaId = resolveWabaId(company);
 
-        String endpoint = "/" + company.getMetaWabaId() + "/flows";
+        String endpoint = "/" + wabaId + "/flows";
         log.info("Iniciando sincronização de Flows para a empresa ID {}", company.getId());
 
         WebClient webClient = getBspWebClient();
@@ -671,5 +674,13 @@ public class FlowServiceImpl implements FlowService {
         } else {
             entity.setValidationErrors(null);
         }
+    }
+
+    private String resolveWabaId(Company company) {
+        return phoneNumberRepository.findFirstByCompanyAndIsDefaultTrue(company)
+                .map(WhatsAppPhoneNumber::getWabaId)
+                .or(() -> phoneNumberRepository.findByCompany(company).stream()
+                        .findFirst().map(WhatsAppPhoneNumber::getWabaId))
+                .orElseThrow(() -> new BusinessException("Não foi possível identificar uma conta de WhatsApp (WABA) para criar o Flow. Cadastre um número primeiro."));
     }
 }

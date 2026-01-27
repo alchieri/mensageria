@@ -38,8 +38,10 @@ import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.exception.ResourceNotFoundException;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.User;
+import com.br.alchieri.consulting.mensageria.model.WhatsAppPhoneNumber;
 import com.br.alchieri.consulting.mensageria.model.enums.Role;
 import com.br.alchieri.consulting.mensageria.repository.CompanyRepository;
+import com.br.alchieri.consulting.mensageria.repository.WhatsAppPhoneNumberRepository;
 import com.br.alchieri.consulting.mensageria.service.BillingService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -57,10 +59,13 @@ public class WhatsAppBusinessApiServiceImpl implements WhatsAppBusinessApiServic
     private static final Logger logger = LoggerFactory.getLogger(WhatsAppBusinessApiServiceImpl.class);
 
     private final WebClient.Builder webClientBuilder;
+    private final ObjectMapper objectMapper;
+
     private final CompanyRepository companyRepository;
     private final ClientTemplateRepository clientTemplateRepository;
+    private final WhatsAppPhoneNumberRepository phoneNumberRepository;
+
     private final BillingService billingService;
-    private final ObjectMapper objectMapper;
 
     // URL base global
     @Value("${whatsapp.graph-api.base-url}")
@@ -402,10 +407,11 @@ public class WhatsAppBusinessApiServiceImpl implements WhatsAppBusinessApiServic
 
     // Helper para obter WABA ID da company
     private String getCompanyWabaId(Company company) {
-        if (company == null || company.getMetaWabaId() == null || company.getMetaWabaId().isBlank()) {
-            throw new BusinessException("WABA ID da Meta não configurado para a empresa.");
-        }
-        return company.getMetaWabaId();
+        return phoneNumberRepository.findFirstByCompanyAndIsDefaultTrue(company)
+                .map(WhatsAppPhoneNumber::getWabaId)
+                .or(() -> phoneNumberRepository.findByCompany(company).stream()
+                        .findFirst().map(WhatsAppPhoneNumber::getWabaId))
+                .orElseThrow(() -> new BusinessException("Não foi possível identificar uma conta de WhatsApp (WABA) para criar o Flow. Cadastre um número primeiro."));
     }
 
     private Company getCompanyFromUser(User user) {

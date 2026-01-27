@@ -28,8 +28,10 @@ import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.exception.ResourceNotFoundException;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.User;
+import com.br.alchieri.consulting.mensageria.model.WhatsAppPhoneNumber;
 import com.br.alchieri.consulting.mensageria.model.enums.Role;
 import com.br.alchieri.consulting.mensageria.repository.CompanyRepository;
+import com.br.alchieri.consulting.mensageria.repository.WhatsAppPhoneNumberRepository;
 import com.br.alchieri.consulting.mensageria.service.BillingService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -44,12 +46,15 @@ import reactor.core.publisher.Mono;
 @Slf4j
 public class CampaignServiceImpl implements CampaignService {
 
+    private final ObjectMapper objectMapper; // Para serializar parâmetros
     private final WebClient.Builder webClientBuilder;
+
     private final ScheduledCampaignRepository campaignRepository;
     private final ScheduledMessageRepository messageRepository;
     private final ContactRepository contactRepository;
     private final CompanyRepository companyRepository;
-    private final ObjectMapper objectMapper; // Para serializar parâmetros
+    private final WhatsAppPhoneNumberRepository phoneNumberRepository;
+
     private final CallbackService callbackService;
     private final BillingService billingService;
 
@@ -260,10 +265,8 @@ public class CampaignServiceImpl implements CampaignService {
 
     @Override
     public Mono<Void> subscribeAppToWaba(Company company) {
-        String wabaId = company.getMetaWabaId();
-        if (wabaId == null || wabaId.isBlank()) {
-            return Mono.error(new BusinessException("Empresa não tem um WABA ID configurado para assinar webhooks."));
-        }
+        
+        String wabaId = resolveWabaId(company);
 
         String endpoint = "/" + wabaId + "/subscribed_apps";
         log.info("Assinando App do BSP à WABA ID {} para receber webhooks.", wabaId);
@@ -300,5 +303,13 @@ public class CampaignServiceImpl implements CampaignService {
                 .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + bspSystemUserAccessToken)
                 .baseUrl(this.graphApiBaseUrl)
                 .build();
+    }
+
+    private String resolveWabaId(Company company) {
+        return phoneNumberRepository.findFirstByCompanyAndIsDefaultTrue(company)
+                .map(WhatsAppPhoneNumber::getWabaId)
+                .or(() -> phoneNumberRepository.findByCompany(company).stream()
+                        .findFirst().map(WhatsAppPhoneNumber::getWabaId))
+                .orElseThrow(() -> new BusinessException("Não foi possível identificar uma conta de WhatsApp (WABA) para criar o Flow. Cadastre um número primeiro."));
     }
 }
