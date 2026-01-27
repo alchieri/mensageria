@@ -8,6 +8,8 @@ import java.util.Map;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import com.br.alchieri.consulting.mensageria.dto.cart.CartDTO;
+
 import jakarta.persistence.Column;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -46,6 +48,9 @@ public class UserSession implements Serializable {
     // --- CONTEXTO ---
     @Builder.Default
     private Map<String, String> contextData = new HashMap<>();
+
+    // O Carrinho vive aqui enquanto a sessão durar (TTL)
+    private CartDTO cart = new CartDTO();
 
     public void addContextData(String key, String value) {
         if (this.contextData == null) {

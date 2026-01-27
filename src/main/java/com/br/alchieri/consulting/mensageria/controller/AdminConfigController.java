@@ -1,6 +1,5 @@
 package com.br.alchieri.consulting.mensageria.controller;
 
-import java.time.Duration;
 import java.util.Map;
 
 import org.springframework.http.ResponseEntity;
@@ -24,7 +23,6 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import reactor.core.publisher.Mono;
 
 @RestController
 @RequestMapping("/api/v1/admin/platform-config")
@@ -35,7 +33,6 @@ import reactor.core.publisher.Mono;
 public class AdminConfigController {
 
     private final PlatformConfigService platformConfigService;
-    private static final Duration BLOCK_TIMEOUT = Duration.ofSeconds(30);
 
     @PostMapping("/upload-flow-public-key")
     @Operation(summary = "Upload da Chave Pública do Flow Endpoint",

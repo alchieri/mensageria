@@ -26,10 +26,17 @@ import com.br.alchieri.consulting.mensageria.chat.repository.ClientTemplateRepos
 import com.br.alchieri.consulting.mensageria.chat.repository.FlowRepository;
 import com.br.alchieri.consulting.mensageria.chat.service.BotEngineService;
 import com.br.alchieri.consulting.mensageria.chat.service.WhatsAppCloudApiService;
+import com.br.alchieri.consulting.mensageria.dto.cart.CartDTO;
+import com.br.alchieri.consulting.mensageria.dto.cart.CartItemDTO;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.User;
+import com.br.alchieri.consulting.mensageria.model.WhatsAppPhoneNumber;
+import com.br.alchieri.consulting.mensageria.model.cart.Order;
 import com.br.alchieri.consulting.mensageria.model.enums.ConversationState;
+import com.br.alchieri.consulting.mensageria.model.enums.PaymentMethod;
 import com.br.alchieri.consulting.mensageria.model.redis.UserSession;
+import com.br.alchieri.consulting.mensageria.payment.service.PaymentService;
+import com.br.alchieri.consulting.mensageria.service.impl.CartServiceImpl;
 import com.br.alchieri.consulting.mensageria.service.impl.SessionService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -46,25 +53,26 @@ public class BotEngineServiceImpl implements BotEngineService {
 
     private final BotRepository botRepository;
     private final BotStepRepository botStepRepository;
-
     private final FlowRepository flowRepository;
     private final ClientTemplateRepository templateRepository;
 
     private final WhatsAppCloudApiService whatsAppService;
     private final SessionService sessionService;
+    private final CartServiceImpl cartService; // Injeção necessária para o checkout
+    private final PaymentService paymentService;
 
     private final ObjectMapper objectMapper;
 
     @Override
-    public boolean tryTriggerBot(Company company, Contact contact, UserSession session, User systemUser) {
+    public boolean tryTriggerBot(Company company, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
         List<Bot> bots = botRepository.findByCompanyAndIsActiveTrue(company);
 
         for (Bot bot : bots) {
             if (shouldTrigger(bot)) {
-                log.info("Iniciando Bot '{}' para {}", bot.getName(), contact.getPhoneNumber());
+                log.info("Iniciando Bot '{}' para {} via canal {}", bot.getName(), contact.getPhoneNumber(), channel.getPhoneNumberId());
                 session.setBotActive(true);
                 session.setCurrentBotId(bot.getId());
-                executeStep(bot.getRootStep(), contact, session, systemUser);
+                executeStep(bot.getRootStep(), contact, session, systemUser, channel);
                 return true;
             }
         }
@@ -72,15 +80,34 @@ public class BotEngineServiceImpl implements BotEngineService {
     }
 
     @Override
-    public void processInput(String input, Contact contact, UserSession session, User systemUser) {
+    public void processInput(String input, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
+        
+        // 1. Cenário Especial: Confirmação de Pedido (Checkout)
+        if (session.getCurrentState() == ConversationState.CONFIRMING_ORDER.name()) {
+            handleOrderConfirmation(input, contact, session, systemUser, channel);
+            return;
+        } else if (session.getCurrentState() == ConversationState.SELECTING_PAYMENT_METHOD.name()) {
+            handlePaymentSelection(input, contact, session, systemUser, channel);
+            return;
+        }
+
+        // 2. Cenário Especial: Trigger de Checkout vindo do Webhook
+        if ("CHECKOUT_TRIGGER".equals(input)) {
+            handleCheckoutTrigger(contact, session, systemUser, channel);
+            return;
+        }
+
+        // 3. Cenário Padrão: Navegação por Passos do Bot
         Long stepId = session.getCurrentStepId();
         BotStep currentStep = botStepRepository.findById(stepId).orElse(null);
 
         if (currentStep == null) {
+            // Se perdeu o passo, reseta
             sessionService.resetSession(session);
             return;
         }
 
+        // Tenta dar match na opção escolhida
         Optional<BotOption> match = currentStep.getOptions().stream()
                 .filter(opt -> checkMatch(input, opt.getKeyword()))
                 .findFirst();
@@ -89,19 +116,23 @@ public class BotEngineServiceImpl implements BotEngineService {
             BotOption selectedOption = match.get();
             
             if (selectedOption.isHandoff()) {
-                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Transferindo para um atendente..."), systemUser).subscribe();
-                executeHandoffStep(currentStep, contact, session, systemUser); 
+                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Transferindo para um atendente...", channel), systemUser).subscribe();
+                executeHandoffStep(currentStep, contact, session, systemUser, channel); 
             } else if (selectedOption.getTargetStep() != null) {
-                executeStep(selectedOption.getTargetStep(), contact, session, systemUser);
+                executeStep(selectedOption.getTargetStep(), contact, session, systemUser, channel);
             } else {
+                // Fim da linha configurada
                 sessionService.resetSession(session);
             }
         } else {
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Opção inválida. Tente novamente."), systemUser).subscribe();
+            // Input inválido
+            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Opção inválida. Tente novamente.", channel), systemUser).subscribe();
         }
     }
 
-    private void executeStep(BotStep step, Contact contact, UserSession session, User systemUser) {
+    // --- EXECUÇÃO DE PASSOS ---
+
+    private void executeStep(BotStep step, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
         log.info("Executando passo bot: ID={}, Tipo={}, Contato={}", step.getId(), step.getStepType(), contact.getPhoneNumber());
 
         session.setCurrentStepId(step.getId());
@@ -109,24 +140,24 @@ public class BotEngineServiceImpl implements BotEngineService {
 
         try {
             switch (step.getStepType()) {
-                case TEXT -> executeTextStep(step, contact, systemUser);
-                case FLOW -> executeFlowStep(step, contact, systemUser);
-                case TEMPLATE -> executeTemplateStep(step, contact, systemUser);
-                case MEDIA -> executeMediaStep(step, contact, systemUser);
-                case HANDOFF -> executeHandoffStep(step, contact, session, systemUser);
-                case END -> executeEndStep(step, contact, session, systemUser);
+                case TEXT -> executeTextStep(step, contact, systemUser, channel);
+                case FLOW -> executeFlowStep(step, contact, systemUser, channel);
+                case TEMPLATE -> executeTemplateStep(step, contact, systemUser, channel);
+                case MEDIA -> executeMediaStep(step, contact, systemUser, channel);
+                case HANDOFF -> executeHandoffStep(step, contact, session, systemUser, channel);
+                case END -> executeEndStep(step, contact, session, systemUser, channel);
                 default -> {
                     log.warn("Tipo de passo desconhecido: {}", step.getStepType());
-                    whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Erro: Tipo de passo não suportado."), systemUser).subscribe();
+                    whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Erro: Tipo de passo não suportado.", channel), systemUser).subscribe();
                 }
             }
         } catch (Exception e) {
             log.error("Erro crítico ao executar passo do bot ID {}: {}", step.getId(), e.getMessage(), e);
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Desculpe, ocorreu um erro técnico no bot."), systemUser).subscribe();
+            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Desculpe, ocorreu um erro técnico no bot.", channel), systemUser).subscribe();
         }
     }
 
-    private void executeTextStep(BotStep step, Contact contact, User systemUser) {
+    private void executeTextStep(BotStep step, Contact contact, User systemUser, WhatsAppPhoneNumber channel) {
         StringBuilder body = new StringBuilder(step.getContent());
 
         if (step.getOptions() != null && !step.getOptions().isEmpty()) {
@@ -139,21 +170,16 @@ public class BotEngineServiceImpl implements BotEngineService {
             }
         }
 
-        whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), body.toString()), systemUser).subscribe();
+        whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), body.toString(), channel), systemUser).subscribe();
     }
 
-    // --- FLOW STEP ---
-    private void executeFlowStep(BotStep step, Contact contact, User systemUser) throws JsonProcessingException {
-        
-        // O content agora é o ID do Flow (Long em String)
+    private void executeFlowStep(BotStep step, Contact contact, User systemUser, WhatsAppPhoneNumber channel) throws JsonProcessingException {
         Long flowId = Long.valueOf(step.getContent());
-        
-        // Busca o Flow atualizado no banco
         Flow flow = flowRepository.findById(flowId).orElse(null);
         
         if (flow == null || flow.getStatus() != FlowStatus.PUBLISHED) {
-            log.error("Flow ID {} não encontrado ou não publicado durante execução do bot.", flowId);
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Erro técnico: Fluxo indisponível."), systemUser).subscribe();
+            log.error("Flow ID {} não encontrado ou não publicado.", flowId);
+            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Erro técnico: Fluxo indisponível.", channel), systemUser).subscribe();
             return;
         }
 
@@ -161,52 +187,43 @@ public class BotEngineServiceImpl implements BotEngineService {
         
         SendInteractiveFlowMessageRequest request = new SendInteractiveFlowMessageRequest();
         request.setTo(contact.getPhoneNumber());
+        request.setFromPhoneNumberId(channel.getPhoneNumberId()); // IMPORTANTE
         request.setFlowName(flow.getName());
         request.setFlowToken("BOT_STEP_" + step.getId());
         
-        // Configuração padrão
+        // Defaults
         request.setFlowAction("navigate");
         request.setMode("published");
-        request.setBodyText("Por favor, continue o atendimento no formulário abaixo.");
+        request.setBodyText("Por favor, preencha os dados abaixo.");
         request.setFlowCta("Abrir");
 
         SendInteractiveFlowMessageRequest.FlowActionPayload flowActionPayload = new SendInteractiveFlowMessageRequest.FlowActionPayload();
-        flowActionPayload.setScreen("SUCCESS"); // Tela padrão (fallback)
+        flowActionPayload.setScreen("SUCCESS");
 
         if (metadataJson != null && !metadataJson.isBlank()) {
             JsonNode metaNode = objectMapper.readTree(metadataJson);
-            
             if (metaNode.has("header")) request.setHeaderText(metaNode.path("header").asText());
             if (metaNode.has("body")) request.setBodyText(metaNode.path("body").asText());
             if (metaNode.has("footer")) request.setFooterText(metaNode.path("footer").asText());
             if (metaNode.has("cta_label")) request.setFlowCta(metaNode.path("cta_label").asText());
-            if (metaNode.has("mode")) request.setMode(metaNode.path("mode").asText());
-
-            if (metaNode.has("screen_id")) {
-                flowActionPayload.setScreen(metaNode.path("screen_id").asText());
-            }
+            if (metaNode.has("screen_id")) flowActionPayload.setScreen(metaNode.path("screen_id").asText());
             if (metaNode.has("data")) {
-                Map<String, Object> dataMap = objectMapper.convertValue(metaNode.path("data"), new TypeReference<Map<String, Object>>() {});
-                flowActionPayload.setData(dataMap);
+                 Map<String, Object> dataMap = objectMapper.convertValue(metaNode.path("data"), new TypeReference<Map<String, Object>>() {});
+                 flowActionPayload.setData(dataMap);
             }
         }
         
         request.setFlowActionPayload(flowActionPayload);
-
         whatsAppService.sendInteractiveFlowMessage(request, systemUser).subscribe();
     }
 
-    // --- TEMPLATE STEP ---
-    private void executeTemplateStep(BotStep step, Contact contact, User systemUser) throws JsonProcessingException {
-        
-        // O content agora é o ID do Template
+    private void executeTemplateStep(BotStep step, Contact contact, User systemUser, WhatsAppPhoneNumber channel) throws JsonProcessingException {
         Long templateId = Long.valueOf(step.getContent());
-        
         ClientTemplate template = templateRepository.findById(templateId).orElse(null);
         
         if (template == null || !"APPROVED".equalsIgnoreCase(template.getStatus())) {
-            log.error("Template ID {} inválido durante execução.", templateId);
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Erro técnico: Template indisponível."), systemUser).subscribe();
+            log.error("Template ID {} inválido.", templateId);
+            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Erro técnico: Template indisponível.", channel), systemUser).subscribe();
             return;
         }
 
@@ -214,23 +231,20 @@ public class BotEngineServiceImpl implements BotEngineService {
 
         SendTemplateMessageRequest request = new SendTemplateMessageRequest();
         request.setTo(contact.getPhoneNumber());
-        request.setTemplateName(template.getTemplateName()); // O WhatsApp precisa do NOME
+        request.setFromPhoneNumberId(channel.getPhoneNumberId()); // IMPORTANTE
+        request.setTemplateName(template.getTemplateName());
         request.setLanguageCode(template.getLanguage());
 
         if (metadataJson != null && !metadataJson.isBlank()) {
             JsonNode metaNode = objectMapper.readTree(metadataJson);
-            
             if (metaNode.has("language")) {
                 request.setLanguageCode(metaNode.path("language").asText());
             }
-
             if (metaNode.has("components")) {
-                // CORREÇÃO: Usar TypeReference para garantir a tipagem correta da Lista
                 List<TemplateComponentRequest> components = objectMapper.convertValue(
                     metaNode.get("components"),
                     new TypeReference<List<TemplateComponentRequest>>() {}
                 );
-                // CORREÇÃO: Usar setResolvedComponents, pois são valores já definidos no JSON do bot, não mapeamentos dinâmicos
                 request.setResolvedComponents(components);
             }
         }
@@ -238,13 +252,34 @@ public class BotEngineServiceImpl implements BotEngineService {
         whatsAppService.sendTemplateMessage(request, systemUser, null).subscribe();
     }
 
-    private void executeHandoffStep(BotStep step, Contact contact, UserSession session, User systemUser) {
+    private void executeMediaStep(BotStep step, Contact contact, User systemUser, WhatsAppPhoneNumber channel) throws JsonProcessingException {
+        String mediaId = step.getContent();
+        String type = "image"; 
+        String caption = null;
+
+        if (step.getMetadata() != null) {
+            JsonNode node = objectMapper.readTree(step.getMetadata());
+            if (node.has("caption")) caption = node.path("caption").asText();
+            if (node.has("type")) type = node.path("type").asText();
+        }
+        
+        SendMediaMessageRequest req = new SendMediaMessageRequest();
+        req.setTo(contact.getPhoneNumber());
+        req.setFromPhoneNumberId(channel.getPhoneNumberId()); // IMPORTANTE
+        req.setType(type);
+        req.setMediaId(mediaId);
+        req.setCaption(caption);
+        
+        whatsAppService.sendMediaMessage(req, systemUser).subscribe();
+    }
+
+    private void executeHandoffStep(BotStep step, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
         String message = step.getContent();
         if (message == null || message.isBlank()) {
             message = "Aguarde um momento, estamos transferindo para um atendente humano.";
         }
         
-        whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), message), systemUser).subscribe();
+        whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), message, channel), systemUser).subscribe();
         
         sessionService.updateState(session, ConversationState.IN_SERVICE_HUMAN);
         session.setBotActive(false);
@@ -254,46 +289,126 @@ public class BotEngineServiceImpl implements BotEngineService {
         log.info("Transbordo realizado para contato {}", contact.getPhoneNumber());
     }
 
-    private void executeEndStep(BotStep step, Contact contact, UserSession session, User systemUser) {
+    private void executeEndStep(BotStep step, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
         String message = step.getContent();
         if (message != null && !message.isBlank()) {
-            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), message), systemUser).subscribe();
+            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), message, channel), systemUser).subscribe();
         }
         sessionService.resetSession(session);
     }
 
-    private void executeMediaStep(BotStep step, Contact contact, User systemUser) throws JsonProcessingException {
-        
-        // O content é o ID da Mídia (String/UUID)
-        String mediaId = step.getContent();
-        
-        // Se a API de envio precisa do ID do banco de upload para pegar o ID do Facebook:
-        // (Assumindo que sua implementação de sendMediaMessage resolve o ID interno para o ID do FB)
-        
-        String type = "image"; // Default, ou pegar do metadata ou da própria entidade MediaUpload
-        String caption = null;
+    // --- CHECKOUT / CARRINHO ---
 
-        if (step.getMetadata() != null) {
-            JsonNode node = objectMapper.readTree(step.getMetadata());
-            if (node.has("caption")) caption = node.path("caption").asText();
-            // Se o tipo vier do metadado, ok. Se não, ideal é buscar no banco MediaUpload.
+    private void handleCheckoutTrigger(Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
+        CartDTO cart = session.getCart();
+        if (cart.isEmpty()) {
+            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Seu carrinho está vazio.", channel), systemUser).subscribe();
+            return;
         }
+
+        StringBuilder sb = new StringBuilder("🛒 *Resumo do Pedido:*\n\n");
+        for (CartItemDTO item : cart.getItems()) {
+            sb.append(String.format("- %dx %s (Total: %s)\n", item.getQuantity(), item.getName(), item.getTotal()));
+        }
+        sb.append("\n💰 *Total Geral: " + cart.getTotalAmount() + "*\n");
+        sb.append("\nDeseja finalizar o pedido? Digite *Sim* para confirmar ou *Não* para cancelar.");
+
+        whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), sb.toString(), channel), systemUser).subscribe();
         
-        SendMediaMessageRequest req = new SendMediaMessageRequest();
-        req.setTo(contact.getPhoneNumber());
-        req.setType(type); // Ideal: pegar do MediaUpload.getType()
-        req.setMediaId(mediaId); // Passa o ID interno ou FB ID (depende da sua impl do Service)
-        req.setCaption(caption);
-        
-        whatsAppService.sendMediaMessage(req, systemUser).subscribe();
+        sessionService.updateState(session, ConversationState.CONFIRMING_ORDER);
     }
+
+    private void handleOrderConfirmation(String input, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
+        if (input.toLowerCase().contains("sim")) {
+            try {
+                // 1. Cria o Pedido (PENDING)
+                Order order = cartService.checkout(session, contact, channel);
+                
+                // 2. Salva o ID do pedido na sessão para usar no próximo passo
+                session.addContextData("current_order_id", order.getId().toString());
+
+                // 3. Pergunta a forma de pagamento
+                String msg = "✅ Pedido #" + order.getId() + " gerado!\n\n"
+                           + "Como deseja pagar?\n"
+                           + "1️⃣ Pix (Aprovação Imediata)\n"
+                           + "2️⃣ Cartão de Crédito / Link";
+                
+                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), msg, channel), systemUser).subscribe();
+                
+                // 4. Muda estado
+                sessionService.updateState(session, ConversationState.SELECTING_PAYMENT_METHOD);
+                
+            } catch (Exception e) {
+                log.error("Erro no checkout", e);
+                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Ocorreu um erro ao processar seu pedido. Tente novamente.", channel), systemUser).subscribe();
+            }
+        } else if (input.toLowerCase().contains("não") || input.toLowerCase().contains("nao")) {
+            session.getCart().clear();
+            sessionService.saveSession(session);
+            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Pedido cancelado.", channel), systemUser).subscribe();
+            sessionService.resetSession(session);
+        } else {
+            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Por favor, responda com Sim ou Não.", channel), systemUser).subscribe();
+        }
+    }
+
+    private void handlePaymentSelection(String input, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
+        
+        Long orderId = Long.parseLong(session.getContextData("current_order_id"));
+        
+        if (orderId == null) {
+            sessionService.resetSession(session);
+            return;
+        }
+
+        String option = input.trim();
+        Order updatedOrder = null;
+
+        try {
+            if (option.equals("1") || option.toLowerCase().contains("pix")) {
+                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Gerando Pix... aguarde.", channel), systemUser).subscribe();
+                
+                updatedOrder = paymentService.generatePayment(orderId, PaymentMethod.PIX);
+                
+                // Envia o código Pix
+                String pixMsg = "Aqui está seu código Pix Copia e Cola 👇";
+                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), pixMsg, channel), systemUser).subscribe();
+                
+                // Manda o código puro em outra mensagem para facilitar copiar
+                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), updatedOrder.getPixCopyPaste(), channel), systemUser).subscribe();
+
+            } else if (option.equals("2") || option.toLowerCase().contains("cartao") || option.toLowerCase().contains("link")) {
+                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Gerando Link... aguarde.", channel), systemUser).subscribe();
+                
+                updatedOrder = paymentService.generatePayment(orderId, PaymentMethod.CREDIT_CARD_LINK);
+                
+                String linkMsg = "Clique no link abaixo para pagar com Cartão: 👇\n" + updatedOrder.getPaymentUrl();
+                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), linkMsg, channel), systemUser).subscribe();
+            } else {
+                whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Opção inválida. Digite 1 (Pix) ou 2 (Cartão).", channel), systemUser).subscribe();
+                return; // Não sai do estado, espera input válido
+            }
+            
+            // Se chegou aqui, gerou com sucesso
+            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Assim que o pagamento for confirmado, te avisaremos aqui! Obrigado.", channel), systemUser).subscribe();
+            
+            sessionService.resetSession(session); // Fim do fluxo conversacional
+
+        } catch (Exception e) {
+            log.error("Erro ao gerar pagamento", e);
+            whatsAppService.sendTextMessage(createReq(contact.getPhoneNumber(), "Erro ao gerar pagamento. Tente novamente mais tarde.", channel), systemUser).subscribe();
+            sessionService.resetSession(session);
+        }
+    }
+
+    // --- HELPERS ---
 
     private boolean shouldTrigger(Bot bot) {
         if (bot.getTriggerType() == BotTriggerType.ALWAYS) return true;
         
         if (bot.getTriggerType() == BotTriggerType.RANGE_HOURS) {
             LocalTime now = LocalTime.now(); 
-            return now.isBefore(bot.getStartTime()) || now.isAfter(bot.getEndTime());
+            return now.isAfter(bot.getStartTime()) && now.isBefore(bot.getEndTime());
         }
         return false;
     }
@@ -303,10 +418,13 @@ public class BotEngineServiceImpl implements BotEngineService {
         return input.trim().equalsIgnoreCase(keyword.trim());
     }
 
-    private SendTextMessageRequest createReq(String to, String body) {
+    private SendTextMessageRequest createReq(String to, String body, WhatsAppPhoneNumber channel) {
         SendTextMessageRequest req = new SendTextMessageRequest();
         req.setTo(to);
         req.setMessage(body);
+        if (channel != null) {
+            req.setFromPhoneNumberId(channel.getPhoneNumberId());
+        }
         return req;
     }
 }
