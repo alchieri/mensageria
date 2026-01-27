@@ -4,10 +4,12 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.model.cart.Order;
@@ -85,6 +87,9 @@ public class MercadoPagoGatewayStrategy implements PaymentGateway {
                     .status(status)
                     .build();
 
+        }catch (WebClientResponseException e) {
+            log.error("Erro HTTP Mercado Pago (Create Pix): Status={} Body={}", e.getStatusCode(), e.getResponseBodyAsString());
+            throw new BusinessException("Erro na operadora de pagamento: " + e.getStatusCode());
         } catch (Exception e) {
             log.error("Erro integração Mercado Pago: {}", e.getMessage(), e);
             throw new BusinessException("Falha ao gerar Pix: " + e.getMessage());
@@ -93,10 +98,6 @@ public class MercadoPagoGatewayStrategy implements PaymentGateway {
 
     @Override
     public PaymentResponseDTO createPaymentLink(Order order, PaymentConfig config) {
-        // Implementação para Preferences (Link de Checkout)
-        // Endpoint: POST /checkout/preferences
-        // ... (Similar ao Pix, mas retorna init_point)
-        // Deixando simples para focar no Pix agora
         throw new BusinessException("Link de Checkout Mercado Pago não implementado neste exemplo.");
     }
 
@@ -116,14 +117,37 @@ public class MercadoPagoGatewayStrategy implements PaymentGateway {
                 return PaymentStatus.PENDING; // Na dúvida, mantém pendente
             }
 
-            String mpStatus = response.get("status").asText(); // approved, pending, rejected, cancelled...
+            String mpStatus = response.get("status").asText();
             
-            // Mapeia status do MP para nosso Enum
             return mapMercadoPagoStatus(mpStatus);
 
+        }catch (WebClientResponseException e) {
+            
+            // 404: O ID do pagamento não existe na Meta. Isso nunca vai mudar.
+            if (e.getStatusCode() == HttpStatus.NOT_FOUND) {
+                log.error("Pagamento não encontrado no Mercado Pago (ID: {}). Marcando como FALHA para encerrar.", externalId);
+                return PaymentStatus.FAILED; 
+            }
+            
+            // 401/403: Token inválido ou sem permissão. Não adianta tentar de novo.
+            if (e.getStatusCode() == HttpStatus.UNAUTHORIZED || e.getStatusCode() == HttpStatus.FORBIDDEN) {
+                log.error("Erro de Autenticação Mercado Pago (Token inválido?). Encerrando verificação.", e);
+                return PaymentStatus.FAILED; 
+            }
+
+            // Outros 4xx: Erro na requisição (Bad Request).
+            if (e.getStatusCode().is4xxClientError()) {
+                log.error("Erro cliente Mercado Pago: {}", e.getStatusCode());
+                return PaymentStatus.FAILED;
+            }
+
+            // 5xx: Erro no Servidor do MP. Isso é transiente.
+            log.warn("Mercado Pago indisponível (Status {}). Tentaremos novamente.", e.getStatusCode());
+            return PaymentStatus.PENDING;
+
         } catch (Exception e) {
-            log.error("Erro ao consultar status do pagamento {} no Mercado Pago: {}", externalId, e.getMessage());
-            // Em caso de erro de conexão, assumimos que não mudou (ou tratamos como erro)
+            // Timeout, DNS, Connection Refused -> Transiente
+            log.warn("Erro de conexão ao consultar Mercado Pago (ID: {}): {}", externalId, e.getMessage());
             return PaymentStatus.PENDING; 
         }
     }
@@ -135,13 +159,15 @@ public class MercadoPagoGatewayStrategy implements PaymentGateway {
             case "pending":
             case "in_process":
             case "authorized":
+            case "in_mediation":
                 return PaymentStatus.PENDING;
             case "rejected":
             case "cancelled":
             case "refunded":
             case "charged_back":
-                return PaymentStatus.FAILED; // Ou CANCELED/REFUNDED se tiver esses enums
+                return PaymentStatus.FAILED;
             default:
+                log.warn("Status desconhecido do Mercado Pago: {}", mpStatus);
                 return PaymentStatus.PENDING;
         }
     }
