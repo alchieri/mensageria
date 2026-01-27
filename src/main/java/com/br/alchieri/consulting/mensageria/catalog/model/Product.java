@@ -62,6 +62,8 @@ public class Product {
     @Column
     private String brand;
 
+    private Integer stockQuantity;
+
     @CreationTimestamp
     private LocalDateTime createdAt;
 

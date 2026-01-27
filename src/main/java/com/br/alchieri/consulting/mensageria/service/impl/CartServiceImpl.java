@@ -10,6 +10,7 @@ import com.br.alchieri.consulting.mensageria.catalog.repository.ProductRepositor
 import com.br.alchieri.consulting.mensageria.chat.model.Contact;
 import com.br.alchieri.consulting.mensageria.dto.cart.CartDTO;
 import com.br.alchieri.consulting.mensageria.dto.cart.CartItemDTO;
+import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.model.WhatsAppPhoneNumber;
 import com.br.alchieri.consulting.mensageria.model.cart.Order;
 import com.br.alchieri.consulting.mensageria.model.cart.OrderItem;
@@ -74,6 +75,19 @@ public class CartServiceImpl implements CartService {
         
         if (cart.isEmpty()) return null;
 
+        // 1. REGRA DE NEGÓCIO: Validação Prévia de Estoque (Bulk Check)
+        // Antes de criar qualquer Order, validamos se TODOS os itens têm estoque.
+        // Isso evita criar pedidos parciais ou travar no meio do loop.
+        for (CartItemDTO cartItem : cart.getItems()) {
+            Product product = productRepository.findByCompanyIdAndSku(session.getCompanyId(), cartItem.getProductRetailerId())
+                    .orElseThrow(() -> new BusinessException("Produto indisponível ou removido: " + cartItem.getName()));
+
+            // Verifica a flag booleana E a quantidade numérica (se existir)
+            if (!product.isInStock() || (product.getStockQuantity() != null && product.getStockQuantity() < cartItem.getQuantity())) {
+                throw new BusinessException("Estoque insuficiente para o produto: " + product.getName());
+            }
+        }
+
         Order order = new Order();
         order.setCompany(contact.getCompany());
         order.setContact(contact);
@@ -84,13 +98,26 @@ public class CartServiceImpl implements CartService {
         order.setCurrency(cart.getItems().get(0).getCurrency()); 
 
         for (CartItemDTO cartItem : cart.getItems()) {
+            
             OrderItem orderItem = new OrderItem();
             orderItem.setOrder(order);
             
             // Tenta vincular ao produto real
-            productRepository.findByCompanyIdAndSku(session.getCompanyId(), cartItem.getProductRetailerId())
-                    .ifPresent(orderItem::setProduct);
+            Product product = productRepository.findByCompanyIdAndSku(session.getCompanyId(), cartItem.getProductRetailerId()).get();
 
+            // 3. ATUALIZAÇÃO DE ESTOQUE (Decremento Atômico na Transação)
+            if (product.getStockQuantity() != null) {
+                int newQuantity = product.getStockQuantity() - cartItem.getQuantity();
+                product.setStockQuantity(newQuantity);
+                
+                // Se zerou, atualiza flag
+                if (newQuantity <= 0) {
+                    product.setInStock(false);
+                }
+                productRepository.save(product); // Hibernate cuidará do lock otimista se configurado (@Version)
+            }
+
+            orderItem.setProduct(product);
             orderItem.setProductSku(cartItem.getProductRetailerId());
             orderItem.setProductName(cartItem.getName());
             orderItem.setQuantity(cartItem.getQuantity());

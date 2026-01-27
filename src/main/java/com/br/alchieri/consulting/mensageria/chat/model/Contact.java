@@ -8,6 +8,9 @@ import java.util.Set;
 
 import org.hibernate.annotations.ColumnDefault;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.Filter;
+import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.ParamDef;
 import org.hibernate.annotations.Type;
 import org.hibernate.annotations.UpdateTimestamp;
 
@@ -47,6 +50,8 @@ import lombok.NoArgsConstructor;
         // Constraint única para evitar contatos duplicados (mesmo número) para a mesma empresa
         @Index(name = "uk_contact_company_phone", columnList = "company_id, phoneNumber", unique = true)
 })
+@FilterDef(name = "tenantFilter", parameters = @ParamDef(name = "companyId", type = Long.class))
+@Filter(name = "tenantFilter", condition = "company_id = :companyId")
 @Data
 @NoArgsConstructor
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)

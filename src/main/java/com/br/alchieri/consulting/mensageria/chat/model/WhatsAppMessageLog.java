@@ -4,6 +4,9 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.Filter;
+import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.ParamDef;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import com.br.alchieri.consulting.mensageria.chat.model.enums.MessageDirection;
@@ -31,6 +34,8 @@ import lombok.NoArgsConstructor;
         @Index(name = "idx_wml_company_timestamp", columnList = "company_id, createdAt"), // Index para buscar msg de cliente por tempo
         @Index(name = "idx_wml_scheduled_message_id", columnList = "scheduledMessageId")
 })
+@FilterDef(name = "tenantFilter", parameters = @ParamDef(name = "companyId", type = Long.class))
+@Filter(name = "tenantFilter", condition = "company_id = :companyId")
 @Data
 @NoArgsConstructor
 public class WhatsAppMessageLog {
@@ -62,9 +67,6 @@ public class WhatsAppMessageLog {
     @Column(name = "channel_id")
     private String channelId; // O ID da Meta do telefone da Empresa envolvido (Ex: 100555...)
                               // Fundamental para saber por qual "linha" a conversa ocorreu.
-
-    // @Column(nullable = false)
-    // private String sender; // Número remetente (usuário final ou nosso nº)
 
     @Column(nullable = false)
     private String recipient; // Número destinatário (nosso nº ou usuário final)

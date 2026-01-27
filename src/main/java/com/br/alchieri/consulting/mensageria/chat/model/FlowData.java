@@ -3,6 +3,9 @@ package com.br.alchieri.consulting.mensageria.chat.model;
 import java.time.LocalDateTime;
 
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.Filter;
+import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.ParamDef;
 import org.hibernate.annotations.Type;
 
 import com.br.alchieri.consulting.mensageria.model.Company;
@@ -26,6 +29,8 @@ import lombok.NoArgsConstructor;
         @Index(name = "idx_flowdata_company_receivedat", columnList = "company_id, receivedAt DESC"),
         @Index(name = "idx_flowdata_sender_wa_id", columnList = "senderWaId")
 })
+@FilterDef(name = "tenantFilter", parameters = @ParamDef(name = "companyId", type = Long.class))
+@Filter(name = "tenantFilter", condition = "company_id = :companyId")
 @Data
 @NoArgsConstructor
 public class FlowData {

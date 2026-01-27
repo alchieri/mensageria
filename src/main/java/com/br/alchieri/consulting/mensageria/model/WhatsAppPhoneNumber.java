@@ -3,6 +3,9 @@ package com.br.alchieri.consulting.mensageria.model;
 import java.time.LocalDateTime;
 
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.Filter;
+import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.ParamDef;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -25,6 +28,8 @@ import lombok.ToString;
 
 @Entity
 @Table(name = "whatsapp_phone_numbers")
+@FilterDef(name = "tenantFilter", parameters = @ParamDef(name = "companyId", type = Long.class))
+@Filter(name = "tenantFilter", condition = "company_id = :companyId")
 @Data
 @Builder
 @NoArgsConstructor

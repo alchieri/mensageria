@@ -1,6 +1,7 @@
 package com.br.alchieri.consulting.mensageria.service.impl;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
@@ -9,6 +10,7 @@ import java.util.Optional;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,6 +52,8 @@ public class BillingServiceImpl implements BillingService {
     private final ClientTemplateRepository clientTemplateRepository;
     private final FlowRepository flowRepository;
     private final InvoiceRepository invoiceRepository;
+
+    private final StringRedisTemplate redisTemplate;
 
     private final PhoneNumberUtil phoneUtil = PhoneNumberUtil.getInstance();
 
@@ -221,41 +225,49 @@ public class BillingServiceImpl implements BillingService {
     @Override
     @Transactional
     public BigDecimal calculateMetaCostForMessage(WhatsAppMessageLog messageLog) {
-        if (!"TEMPLATE".equalsIgnoreCase(messageLog.getMessageType()) ||
-            messageLog.getPricingCategory() == null ||
-            messageLog.getCompany() == null) {
+        
+        
+        if (messageLog.getPricingCategory() == null || messageLog.getCompany() == null) {
             return BigDecimal.ZERO;
         }
-
-        String recipient = messageLog.getRecipient();
-        String countryCode = extractCountryCode(recipient);
-
-        if ("UNKNOWN".equals(countryCode)) {
-            log.warn("Não foi possível extrair o código do país do número '{}' para calcular o custo. WAMID: {}", recipient, messageLog.getWamid());
-            // TODO: Decidir uma tarifa padrão para países desconhecidos
-            return BigDecimal.ZERO;
-        }
-
-        String marketOrRegion = CountryCodeMapper.getMarketOrRegion(countryCode);
 
         TemplateCategory category = TemplateCategory.valueOf(messageLog.getPricingCategory().toUpperCase());
-        
-        BillingPlan plan = billingPlanRepository.findByCompany(messageLog.getCompany()).orElse(null);
-        if (plan == null) return BigDecimal.ZERO;
-        
-        // O volume é o total de mensagens já enviadas + 1 (a atual)
-        long currentMonthVolume = plan.getCurrentMonthMessagesSent() + 1;
+        String companyId = messageLog.getCompany().getId().toString();
+        String phoneNumber = messageLog.getRecipient(); // O destino (cliente)
 
-        Optional<MetaRateCard> rateCardEntry = rateCardRepository
-            .findEffectiveRate(marketOrRegion, category, currentMonthVolume, LocalDate.now());
+        // Chave do Redis para controlar a janela ativa
+        // Formato: window:{companyId}:{phoneNumber}:{category} ou genérico se a categoria for hierárquica
+        // Simplificação: A Meta permite janelas sobrepostas de categorias diferentes.
+        String windowKey = "billing_window:" + companyId + ":" + phoneNumber + ":" + category.name();
 
-        if (rateCardEntry.isPresent()) {
-            return rateCardEntry.get().getRate();
-        } else {
-            log.error("Nenhuma tarifa da Meta encontrada para: País={}, Categoria={}, Volume={}. Usando tarifa zero.",
-                      countryCode, category, currentMonthVolume);
+        // Verifica se já existe uma janela aberta para esta categoria e destinatário
+        Boolean hasActiveWindow = redisTemplate.hasKey(windowKey);
+
+        if (Boolean.TRUE.equals(hasActiveWindow)) {
+            log.info("Janela de 24h ativa para [Empresa: {}, Fone: {}, Categ: {}]. Custo Meta = ZERO.", companyId, phoneNumber, category);
             return BigDecimal.ZERO;
         }
+
+        // --- NOVA JANELA DE COBRANÇA ---
+        log.info("Abrindo nova janela de conversação de 24h.");
+        
+        // 1. Calcula o custo da abertura da janela
+        BigDecimal cost = getRateForCategory(messageLog, category); // Método auxiliar que busca no RateCardRepository
+
+        // 2. Registra a janela no Redis com TTL de 24 horas
+        redisTemplate.opsForValue().set(windowKey, "ACTIVE", Duration.ofHours(24));
+
+        return cost;
+    }
+
+    private BigDecimal getRateForCategory(WhatsAppMessageLog messageLog, TemplateCategory category) {
+        String recipient = messageLog.getRecipient();
+        String countryCode = extractCountryCode(recipient);
+        String marketOrRegion = CountryCodeMapper.getMarketOrRegion(countryCode);
+        
+        return rateCardRepository.findEffectiveRate(marketOrRegion, category, 1L, LocalDate.now())
+                .map(MetaRateCard::getRate)
+                .orElse(BigDecimal.ZERO);
     }
     
     @Override

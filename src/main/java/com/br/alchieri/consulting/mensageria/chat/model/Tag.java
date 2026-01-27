@@ -3,6 +3,10 @@ package com.br.alchieri.consulting.mensageria.chat.model;
 import java.util.HashSet;
 import java.util.Set;
 
+import org.hibernate.annotations.Filter;
+import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.ParamDef;
+
 import com.br.alchieri.consulting.mensageria.model.Company;
 
 import jakarta.persistence.Column;
@@ -27,6 +31,8 @@ import lombok.NoArgsConstructor;
         // Garante que o nome da tag seja único para cada empresa
         @Index(name = "uk_tag_company_name", columnList = "company_id, name", unique = true)
 })
+@FilterDef(name = "tenantFilter", parameters = @ParamDef(name = "companyId", type = Long.class))
+@Filter(name = "tenantFilter", condition = "company_id = :companyId")
 @Data
 @NoArgsConstructor
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)

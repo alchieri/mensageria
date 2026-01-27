@@ -95,6 +95,13 @@ public class PaymentServiceImpl implements PaymentService {
         Order order = orderRepository.findByExternalPaymentId(externalPaymentId)
                 .orElseThrow(() -> new BusinessException("Pedido não encontrado para o pagamento ID: " + externalPaymentId));
 
+        if (order == null) {
+            // Fallback: Tenta buscar via API do MP (pseudo-código, pois depende da implementação do Gateway)
+            // Isso é complexo pois precisamos do Token da empresa para consultar a API.
+            log.warn("Pedido não encontrado localmente pelo ID do MP: {}. Ignorando se não houver lógica de busca global.", externalPaymentId);
+            return;
+        }
+
         // Se já está pago ou cancelado, ignora (evita processamento duplicado)
         if (order.getPaymentStatus() == PaymentStatus.PAID || order.getPaymentStatus() == PaymentStatus.FAILED) {
             return;

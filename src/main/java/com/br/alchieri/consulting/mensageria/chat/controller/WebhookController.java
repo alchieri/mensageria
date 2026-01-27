@@ -15,27 +15,28 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.br.alchieri.consulting.mensageria.chat.service.WebhookService;
+import com.br.alchieri.consulting.mensageria.util.SignatureUtil;
 
 import io.swagger.v3.oas.annotations.Hidden;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import lombok.AllArgsConstructor;
 
 @RestController
 @RequestMapping("/api/v1/webhook/whatsapp") // Path base para o webhook
 @Hidden // Esconde este controller da documentação Swagger principal
 @Validated // Necessário para validar @RequestParam
+@AllArgsConstructor
 public class WebhookController {
 
     private static final Logger logger = LoggerFactory.getLogger(WebhookController.class);
 
     private final WebhookService webhookService;
 
+    private final SignatureUtil signatureUtil;
+
     @Value("${whatsapp.webhook.verify-token}")
     private String verifyToken;
-
-    public WebhookController(WebhookService webhookService) {
-        this.webhookService = webhookService;
-    }
 
     @GetMapping
     public ResponseEntity<String> verifyWebhook(
@@ -59,12 +60,16 @@ public class WebhookController {
             @RequestBody String payload,
             @RequestHeader(value = "X-Hub-Signature-256", required = false) String signature) {
 
-        logger.info("Webhook received, queueing for processing.");
+        // 1. SEGURANÇA IMEDIATA: Validação da Assinatura
+        if (signature == null || !signatureUtil.verifySignature(payload, signature)) {
+            logger.warn("Assinatura inválida ou ausente. IP de origem suspeito.");
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build(); // 403 Bloqueia ataque
+        }
+        logger.info("Webhook validado com sucesso. Enfileirando...");
         try {
-            // O serviço de webhook agora fará a verificação E o enfileiramento
             webhookService.queueWebhookEvent(payload, signature);
             logger.info("Webhook event successfully queued.");
-            return ResponseEntity.ok().build(); // Responde 200 OK imediatamente
+            return ResponseEntity.ok().build();
         } catch (Exception e) {
             logger.error("Failed to queue webhook event. Payload: {}", payload, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();

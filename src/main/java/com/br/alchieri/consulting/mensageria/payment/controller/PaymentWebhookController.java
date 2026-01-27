@@ -22,6 +22,7 @@ import lombok.extern.slf4j.Slf4j;
 public class PaymentWebhookController {
 
     private final PaymentService paymentService;
+
     private final OrderRepository orderRepository;
 
     // Endpoint genérico (Adapte para o JSON específico do seu Gateway)
@@ -58,35 +59,39 @@ public class PaymentWebhookController {
 
     @PostMapping("/mercadopago")
     public ResponseEntity<Void> handleMercadoPagoWebhook(
-            @RequestBody JsonNode payload, 
+            @RequestBody(required = false) JsonNode payload, 
             @RequestParam(value = "id", required = false) String queryId,
-            @RequestParam(value = "topic", required = false) String topic) {
+            @RequestParam(value = "topic", required = false) String topic,
+            @RequestParam(value = "type", required = false) String type) {
         
-        log.info("Webhook Mercado Pago recebido. QueryID: {}, Topic: {}, Payload: {}", queryId, topic, payload);
+        // Log para debug (cuidado com dados sensíveis em produção)
+        log.info("Webhook MP Recebido. QueryId: {}, Topic: {}, Type: {}", queryId, topic, type);
 
         String paymentId = null;
 
-        // 1. Tenta extrair ID da Query String (formato comum para notificações IPN)
+        // Estratégia de Extração do ID do Pagamento (MP envia de várias formas)
         if (queryId != null) {
             paymentId = queryId;
-        } 
-        // 2. Tenta extrair do JSON (formato Webhook V2)
-        else if (payload != null && payload.has("data") && payload.get("data").has("id")) {
+        } else if (payload != null && payload.has("data") && payload.get("data").has("id")) {
             paymentId = payload.get("data").get("id").asText();
         }
 
-        // Se achou um ID e é um tópico de pagamento
-        if (paymentId != null) {
-             // Filtra tópicos irrelevantes (merchant_order, etc) se quiser ser estrito
-             // Mas geralmente checar o status mal não faz.
-             
+        // Validamos se é um evento de pagamento
+        boolean isPaymentEvent = "payment".equals(topic) || "payment".equals(type);
+
+        if (paymentId != null && isPaymentEvent) {
              try {
-                 // AQUI CHAMAMOS O NOVO MÉTODO DE SEGURANÇA
+                 // Sincroniza sem precisar de sessão. O método busca o Order pelo ID do pagamento.
+                 // Nota: Se o MP mandar apenas o ID do Pagamento (e não a external_reference nossa),
+                 // precisamos primeiro consultar a API do MP para descobrir qual é a nossa 'external_reference'.
+                 // O método 'syncStatusWithProvider' abaixo deve fazer isso.
+                 
                  paymentService.syncStatusWithProvider(paymentId);
+                 
              } catch (Exception e) {
-                 log.error("Erro ao processar webhook MP ID {}: {}", paymentId, e.getMessage());
-                 // Retornamos 200 OK mesmo com erro interno para o MP parar de reenviar (ou 500 se quiser retry)
-                 // Geralmente 200 é mais seguro para evitar loops se for erro de lógica nossa.
+                 log.error("Erro processando webhook MP ID {}: {}", paymentId, e.getMessage());
+                 // Retornar 200 evita loops infinitos de retry do MP em caso de erro lógico nosso
+                 return ResponseEntity.ok().build();
              }
         }
 

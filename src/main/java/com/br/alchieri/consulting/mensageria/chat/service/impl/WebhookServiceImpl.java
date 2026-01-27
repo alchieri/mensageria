@@ -144,8 +144,8 @@ public class WebhookServiceImpl implements WebhookService {
         try {
             // 1. Criar um objeto wrapper para a fila que contém TUDO que o consumidor precisa
             WebhookEventPayload queuePayload = WebhookEventPayload.builder()
-                    .rawPayload(payload) // <<< O JSON BRUTO da Meta
-                    .signature(signature) // A assinatura para verificação posterior
+                    .rawPayload(payload)
+                    .signature(signature) 
                     .receivedTimestamp(LocalDateTime.now())
                     .build();
 
