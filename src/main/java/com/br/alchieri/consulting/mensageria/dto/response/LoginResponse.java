@@ -52,14 +52,6 @@ public class LoginResponse {
     @Schema(description = "Nome da empresa à qual o usuário pertence (se aplicável).")
     private String companyName;
 
-    // Informações da Meta (agora pertencem à Company, mas podem ser úteis aqui para o frontend)
-    @Schema(description = "ID do Número de Telefone da Meta primário associado à empresa do usuário (se configurado).")
-    private String metaPrimaryPhoneNumberId;
-
-    @Schema(description = "ID da WABA da Meta associada à empresa do usuário (se configurado).")
-    private String metaWabaId;
-
-
     public static LoginResponse fromUserDetails(User user, String token, long expiresInSeconds) {
         if (user == null) {
             return null;
@@ -81,8 +73,6 @@ public class LoginResponse {
         if (user.getCompany() != null) {
             builder.companyId(user.getCompany().getId());
             builder.companyName(user.getCompany().getName());
-            builder.metaPrimaryPhoneNumberId(user.getCompany().getMetaPrimaryPhoneNumberId());
-            builder.metaWabaId(user.getCompany().getMetaWabaId());
         }
         return builder.build();
     }

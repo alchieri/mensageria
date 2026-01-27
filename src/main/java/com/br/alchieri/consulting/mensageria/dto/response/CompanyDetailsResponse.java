@@ -29,12 +29,9 @@ public class CompanyDetailsResponse {
     private boolean enabled;
 
     // Meta Config
-    private String metaWabaId;
-    private String metaPrimaryPhoneNumberId;
-    private String facebookBusinessManagerId;
     private String metaFlowPublicKeyId;
-
-    private String metaCatalogId;
+    private List<PhoneNumberSummary> phoneNumbers;
+    private List<BusinessManagerSummary> businessManagers;
 
     // Callbacks
     private String generalCallbackUrl;
@@ -63,10 +60,7 @@ public class CompanyDetailsResponse {
                 .contactPhoneNumber(company.getContactPhoneNumber())
                 .address(AddressRequestDTO.fromEntity(company.getAddress()))
                 .enabled(company.isEnabled())
-                .metaWabaId(company.getMetaWabaId())
-                .metaPrimaryPhoneNumberId(company.getMetaPrimaryPhoneNumberId())
                 .metaFlowPublicKeyId(company.getMetaFlowPublicKeyId())
-                .facebookBusinessManagerId(company.getFacebookBusinessManagerId())
                 .generalCallbackUrl(company.getGeneralCallbackUrl())
                 .templateStatusCallbackUrl(company.getTemplateStatusCallbackUrl())
                 .onboardingStatus(company.getOnboardingStatus())
@@ -74,6 +68,21 @@ public class CompanyDetailsResponse {
                 .users(company.getUsers().stream()
                               .map(UserSummaryResponse::fromEntity)
                               .collect(Collectors.toList()))
+                .phoneNumbers(company.getPhoneNumbers().stream().map(pn -> {
+                    PhoneNumberSummary summary = new PhoneNumberSummary();
+                    summary.setId(pn.getId());
+                    summary.setDisplayPhoneNumber(pn.getDisplayPhoneNumber());
+                    summary.setAlias(pn.getAlias());
+                    summary.setDefault(pn.isDefault());
+                    summary.setStatus(pn.getStatus());
+                    return summary;
+                }).collect(Collectors.toList()))
+                .businessManagers(company.getBusinessManagers().stream().map(bm -> {
+                    BusinessManagerSummary summary = new BusinessManagerSummary();
+                    summary.setMetaBusinessId(bm.getMetaBusinessId());
+                    summary.setName(bm.getName());
+                    return summary;
+                }).collect(Collectors.toList()))
                 .createdAt(company.getCreatedAt())
                 .updatedAt(company.getUpdatedAt())
                 .build();
@@ -100,5 +109,20 @@ public class CompanyDetailsResponse {
                     .enabled(user.isEnabled())
                     .build();
         }
+    }
+
+    @Data
+    public static class PhoneNumberSummary {
+        private Long id;
+        private String displayPhoneNumber;
+        private String alias;
+        private boolean isDefault;
+        private String status;
+    }
+
+    @Data
+    public static class BusinessManagerSummary {
+        private String metaBusinessId;
+        private String name;
     }
 }

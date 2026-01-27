@@ -213,34 +213,24 @@ public class AdminController {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "Acesso Proibido.", content = @Content),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Empresa não encontrada.", content = @Content)
     })
-    public ResponseEntity<?> getCompanyWhatsAppStatus(
+    public ResponseEntity<WhatsAppHealthStatusResponse> getCompanyWhatsAppStatus(
             @Parameter(description = "ID da empresa a ser verificada.", required = true) @PathVariable Long companyId
     ) {
         User currentUser = securityUtils.getAuthenticatedUser();
         logger.info("Admin ID {}: Verificando status WhatsApp para a empresa ID {}", currentUser.getId(), companyId);
 
-        try {
-            // Busca a empresa primeiro
-            Company company = companyService.findById(companyId)
-                    .orElseThrow(() -> new ResourceNotFoundException("Empresa com ID " + companyId + " não encontrada."));
+        // Busca a empresa primeiro
+        Company company = companyService.findById(companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Empresa com ID " + companyId + " não encontrada."));
             
-            // Chama o serviço reativo e BLOQUEIA para obter o resultado
-            WhatsAppHealthStatusResponse healthStatus = healthCheckService.checkWhatsAppConfigStatus(company)
-                    .block(BLOCK_TIMEOUT); // Espera o resultado ou um timeout
+        // Chama o serviço reativo e BLOQUEIA para obter o resultado
+        WhatsAppHealthStatusResponse healthStatus = healthCheckService.checkWhatsAppConfigStatus(company);
 
-            if (healthStatus == null) {
-                 // Isso pode acontecer se o Mono do serviço completar vazio por algum motivo
-                 throw new BusinessException("A verificação de status não retornou um resultado.");
-            }
-
-            return ResponseEntity.ok(healthStatus);
-
-        } catch (ResourceNotFoundException e) {
-             throw e; // Deixa o GlobalExceptionHandler retornar 404
-        } catch (RuntimeException e) { // Captura timeout do block() e outros erros reativos
-             logger.error("Erro inesperado (bloqueante) ao verificar status para empresa ID {}: {}", companyId, e.getMessage(), e);
-             ApiResponse errorResponse = new ApiResponse(false, "Erro interno ou timeout ao verificar status: " + e.getMessage(), null);
-             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        if (healthStatus == null) {
+                // Isso pode acontecer se o Mono do serviço completar vazio por algum motivo
+                throw new BusinessException("A verificação de status não retornou um resultado.");
         }
+
+        return ResponseEntity.ok(healthStatus);
     }
 }

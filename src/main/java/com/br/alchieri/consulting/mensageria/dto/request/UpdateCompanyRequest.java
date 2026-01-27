@@ -34,15 +34,6 @@ public class UpdateCompanyRequest {
     @Schema(description = "Novo número de telefone de contato principal da empresa.", example = "+5511999998888")
     private String contactPhoneNumber;
 
-    @Schema(description = "Novo ID da Conta do WhatsApp Business (WABA) da Meta para esta empresa.")
-    private String metaWabaId;
-
-    @Schema(description = "Novo ID do Número de Telefone primário da Meta Cloud API para esta empresa.")
-    private String metaPrimaryPhoneNumberId;
-
-    @Schema(description = "Novo ID do Facebook Business Manager para esta empresa.")
-    private String facebookBusinessManagerId;
-
     @Schema(description = "Nova URL de callback geral para esta empresa.")
     private String callbackUrl;
 

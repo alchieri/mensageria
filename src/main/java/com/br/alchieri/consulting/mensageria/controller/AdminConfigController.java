@@ -54,26 +54,19 @@ public class AdminConfigController {
                                 content = @Content(schema = @Schema(implementation = UploadPublicKeyRequest.class)))
             @Valid @RequestBody UploadPublicKeyRequest request) {
 
-        // Usando a abordagem bloqueante para consistência com outros controllers
-        try {
-            String keyId = platformConfigService.uploadFlowPublicKey(request.getPublicKey(), request.getCompanyId())
-                    .block(BLOCK_TIMEOUT);
-            
-            return ResponseEntity.ok(
-                new ApiResponse(true, "Chave pública registrada com sucesso. Salve o 'publicKeyId' retornado.", Map.of("publicKeyId", keyId))
-            );
-        } catch (Exception e) {
-            // Deixa o GlobalExceptionHandler tratar e formatar a resposta de erro
-            throw new RuntimeException("Falha ao registrar a chave pública: " + e.getMessage(), e);
-        }
+        platformConfigService.uploadFlowPublicKey(request.getPublicKey(), request.getCompanyId());
+        
+        return ResponseEntity.ok(
+            new ApiResponse(true, "Chave pública registrada com sucesso.", Map.of())
+        );
     }
 
     @GetMapping("/flow-public-key-id")
     @Operation(summary = "Obter ID da Chave Pública do Flow")
-    public Mono<ResponseEntity<ApiResponse>> getFlowPublicKeyId(@RequestParam Long companyId) {
-        return platformConfigService.getFlowPublicKeyId(companyId)
-            .map(keyId -> ResponseEntity.ok(
-                new ApiResponse(true, "ID da chave pública recuperado.", Map.of("publicKeyId", keyId)))
-            );
+    public ResponseEntity<ApiResponse> getFlowPublicKeyId(@RequestParam Long companyId) {
+        String keyId = platformConfigService.getFlowPublicKeyId(companyId);
+        return ResponseEntity.ok(
+            new ApiResponse(true, "ID da chave pública recuperado.", Map.of("publicKeyId", keyId))
+        );
     }
 }

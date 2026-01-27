@@ -7,5 +7,5 @@ import reactor.core.publisher.Mono;
 
 public interface HealthCheckService {
 
-    Mono<WhatsAppHealthStatusResponse> checkWhatsAppConfigStatus(Company company);
+    WhatsAppHealthStatusResponse checkWhatsAppConfigStatus(Company company);
 }

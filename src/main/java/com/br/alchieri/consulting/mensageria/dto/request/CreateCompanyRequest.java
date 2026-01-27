@@ -21,9 +21,6 @@ public class CreateCompanyRequest {
     private AddressRequestDTO address;
     private String contactEmail;
     private String contactPhoneNumber;
-    private String metaWabaId;
-    private String metaPrimaryPhoneNumberId;
-    private String facebookBusinessManagerId;
     private String callbackUrl;
     private String templateStatusCallbackUrl;
     @Schema(defaultValue = "NOT_STARTED")

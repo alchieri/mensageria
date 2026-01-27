@@ -67,12 +67,6 @@ public class CompanyServiceImpl implements CompanyService {
                 throw new BusinessException("Empresa com documento '" + request.getDocumentNumber() + "' já existe.");
             });
         }
-        if (StringUtils.hasText(request.getMetaWabaId())) {
-            companyRepository.findByMetaWabaId(request.getMetaWabaId()).ifPresent(c -> {
-                throw new BusinessException("Meta WABA ID '" + request.getMetaWabaId() + "' já está associado a outra empresa.");
-            });
-        }
-
 
         Company company = new Company();
         company.setName(request.getName());
@@ -93,9 +87,6 @@ public class CompanyServiceImpl implements CompanyService {
 
         company.setContactEmail(request.getContactEmail());
         company.setContactPhoneNumber(request.getContactPhoneNumber());
-        company.setMetaWabaId(request.getMetaWabaId());
-        company.setMetaPrimaryPhoneNumberId(request.getMetaPrimaryPhoneNumberId());
-        company.setFacebookBusinessManagerId(request.getFacebookBusinessManagerId());
         company.setGeneralCallbackUrl(request.getCallbackUrl()); // Ajustado nome do campo
         company.setTemplateStatusCallbackUrl(request.getTemplateStatusCallbackUrl());
         company.setOnboardingStatus(request.getOnboardingStatus() != null ? request.getOnboardingStatus() : com.br.alchieri.consulting.mensageria.chat.model.enums.OnboardingStatus.NOT_STARTED);
@@ -153,15 +144,6 @@ public class CompanyServiceImpl implements CompanyService {
             company.setAddress(address);
         }
 
-        if (StringUtils.hasText(request.getMetaWabaId()) && (company.getMetaWabaId() == null || !company.getMetaWabaId().equals(request.getMetaWabaId()))) {
-            companyRepository.findByMetaWabaId(request.getMetaWabaId()).ifPresent(existing -> {
-                 if (!existing.getId().equals(companyId))
-                    throw new BusinessException("Meta WABA ID '" + request.getMetaWabaId() + "' já está em uso.");
-            });
-            company.setMetaWabaId(request.getMetaWabaId());
-        }
-        if (StringUtils.hasText(request.getMetaPrimaryPhoneNumberId())) company.setMetaPrimaryPhoneNumberId(request.getMetaPrimaryPhoneNumberId());
-        if (StringUtils.hasText(request.getFacebookBusinessManagerId())) company.setFacebookBusinessManagerId(request.getFacebookBusinessManagerId());
         if (StringUtils.hasText(request.getCallbackUrl())) company.setGeneralCallbackUrl(request.getCallbackUrl());
         if (StringUtils.hasText(request.getTemplateStatusCallbackUrl())) company.setTemplateStatusCallbackUrl(request.getTemplateStatusCallbackUrl());
         if (request.getOnboardingStatus() != null) company.setOnboardingStatus(request.getOnboardingStatus());

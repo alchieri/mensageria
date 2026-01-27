@@ -1,10 +1,7 @@
 package com.br.alchieri.consulting.mensageria.controller;
 
-import java.time.Duration;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -37,7 +34,6 @@ public class HealthCheckController {
     private static final Logger logger = LoggerFactory.getLogger(HealthCheckController.class);
     private final HealthCheckService healthCheckService;
     private final SecurityUtils securityUtils;
-    private static final Duration BLOCK_TIMEOUT = Duration.ofSeconds(20);
 
     @GetMapping(value = "/whatsapp-status", produces = MediaType.APPLICATION_JSON_VALUE)
     @Operation(summary = "Verificar Saúde da Configuração WhatsApp",
@@ -51,7 +47,8 @@ public class HealthCheckController {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Erro interno do servidor.",
                     content = @Content(schema = @Schema(implementation = ApiResponse.class)))
     })
-    public ResponseEntity<?> getMyCompanyWhatsAppStatus() {
+    public ResponseEntity<WhatsAppHealthStatusResponse> getMyCompanyWhatsAppStatus() {
+        
         User currentUser = securityUtils.getAuthenticatedUser();
         Company currentCompany = currentUser.getCompany();
 
@@ -63,26 +60,12 @@ public class HealthCheckController {
         }
 
         logger.info("Empresa ID {}: Verificando status da configuração WhatsApp.", currentCompany.getId());
-
-        try {
-            // Chama o serviço reativo e BLOQUEIA
-            WhatsAppHealthStatusResponse healthStatus = healthCheckService.checkWhatsAppConfigStatus(currentCompany)
-                    .block(BLOCK_TIMEOUT);
+        WhatsAppHealthStatusResponse healthStatus = healthCheckService.checkWhatsAppConfigStatus(currentCompany);
             
-            if (healthStatus == null) {
-                throw new BusinessException("A verificação de status não retornou um resultado.");
-            }
-
-            return ResponseEntity.ok(healthStatus);
-
-        } catch (BusinessException e) {
-            // Relança BusinessException para ser pego pelo GlobalExceptionHandler com status 400
-            throw e;
-        } catch (RuntimeException e) {
-            // Captura timeout do block() e outras exceções inesperadas
-            logger.error("Erro inesperado (bloqueante) ao verificar status para empresa ID {}: {}", currentCompany.getId(), e.getMessage(), e);
-            ApiResponse errorResponse = new ApiResponse(false, "Erro interno ou timeout ao verificar status.", null);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        if (healthStatus == null) {
+            throw new BusinessException("A verificação de status não retornou um resultado.");
         }
+
+        return ResponseEntity.ok(healthStatus);
     }
 }

@@ -7,19 +7,19 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.reactive.function.BodyInserters;
@@ -31,8 +31,10 @@ import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.exception.ResourceNotFoundException;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.MetaRateCard;
+import com.br.alchieri.consulting.mensageria.model.WhatsAppPhoneNumber;
 import com.br.alchieri.consulting.mensageria.repository.CompanyRepository;
 import com.br.alchieri.consulting.mensageria.repository.MetaRateCardRepository;
+import com.br.alchieri.consulting.mensageria.repository.WhatsAppPhoneNumberRepository;
 import com.br.alchieri.consulting.mensageria.service.PlatformConfigService;
 import com.br.alchieri.consulting.mensageria.util.CountryCodeMapper;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -42,7 +44,6 @@ import com.opencsv.exceptions.CsvValidationException;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import reactor.core.publisher.Mono;
 
 @Service
 @RequiredArgsConstructor
@@ -52,6 +53,7 @@ public class PlatformConfigServiceImpl implements PlatformConfigService {
     private final WebClient.Builder webClientBuilder;
     private final MetaRateCardRepository rateCardRepository;
     private final CompanyRepository companyRepository;
+    private final WhatsAppPhoneNumberRepository phoneNumberRepository;
 
     @Value("${whatsapp.graph-api.base-url}")
     private String graphApiBaseUrl;
@@ -60,117 +62,98 @@ public class PlatformConfigServiceImpl implements PlatformConfigService {
     @Value("${whatsapp.api.token}")
     private String bspSystemUserAccessToken;
 
-    private WebClient getBspWebClient() {
-        if (bspSystemUserAccessToken == null || bspSystemUserAccessToken.isBlank()) {
-            throw new BusinessException("Token de System User do BSP não configurado.");
-        }
-        return webClientBuilder.clone()
-                .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + bspSystemUserAccessToken)
-                .baseUrl(this.graphApiBaseUrl)
-                .build();
-    }
-
     @Override
-    public Mono<String> uploadFlowPublicKey(String publicKeyPem, Long companyId) {
+    public void uploadFlowPublicKey(String publicKeyPem, Long companyId) {
         
         Company company = companyRepository.findById(companyId)
-                .orElseThrow(() -> new ResourceNotFoundException("Empresa com ID " + companyId + " não encontrada."));
+                .orElseThrow(() -> new ResourceNotFoundException("Empresa não encontrada"));
 
-        if (company.getMetaPrimaryPhoneNumberId() == null || company.getMetaPrimaryPhoneNumberId().isBlank()) {
-            return Mono.error(new BusinessException("O ID do Phone Number da Meta não está configurado."));
+        // 1. Busca todos os números da empresa para descobrir as WABAs
+        List<WhatsAppPhoneNumber> phoneNumbers = phoneNumberRepository.findByCompany(company);
+        
+        if (phoneNumbers.isEmpty()) {
+            throw new BusinessException("A empresa não possui números de WhatsApp configurados. Não é possível identificar a WABA para upload da chave.");
         }
 
-        // O endpoint é POST /{app-id}/whatsapp_business_encryption
-        String endpoint = "/" + company.getMetaPrimaryPhoneNumberId() + "/whatsapp_business_encryption";
-        log.info("Empresa ID {}: Iniciando registro da chave pública para o Phone Number ID {}", companyId, company.getMetaPrimaryPhoneNumberId());
+        // 2. Extrai WABA IDs únicos (para não enviar 2x para a mesma conta)
+        Set<String> uniqueWabaIds = phoneNumbers.stream()
+                .map(WhatsAppPhoneNumber::getWabaId)
+                .filter(wabaId -> wabaId != null && !wabaId.isBlank())
+                .collect(Collectors.toSet());
 
-        MultiValueMap<String, String> formData = new LinkedMultiValueMap<>();
-        formData.add("business_public_key", publicKeyPem);
+        if (uniqueWabaIds.isEmpty()) {
+            throw new BusinessException("Nenhum WABA ID encontrado nos números cadastrados.");
+        }
+
+        // 3. Limpa a chave PEM para o formato que a Meta aceita (apenas o base64 sem headers, geralmente)
+        // A Meta geralmente aceita o PEM completo ou apenas o corpo. 
+        // Vamos assumir que enviamos o PEM limpo ou formatado conforme a doc.
+        // Se a Meta pedir "clean string":
+        String cleanPublicKey = cleanPemKey(publicKeyPem);
+
+        // 4. Itera e faz upload para cada WABA
+        // Usamos block() aqui se o método for void síncrono, ou transformamos em Flux/Mono se for reativo.
+        // Assumindo método síncrono por enquanto:
         
-        BodyInserters.FormInserter<String> requestBody = BodyInserters.fromFormData(formData);
+        int successCount = 0;
+        for (String wabaId : uniqueWabaIds) {
+            try {
+                uploadKeyToWaba(wabaId, cleanPublicKey);
+                successCount++;
+            } catch (Exception e) {
+                log.error("Falha ao enviar chave pública para WABA {}: {}", wabaId, e.getMessage());
+                // Decide se lança exceção ou continua (Melhor esforço)
+            }
+        }
 
-        return getBspWebClient().post()
-                .uri(endpoint)
-                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                .body(requestBody)
-                .retrieve()
-                .onStatus(HttpStatusCode::isError, clientResponse ->
-                    clientResponse.bodyToMono(String.class)
-                        .flatMap(errorBody -> {
-                            log.error("Erro da API Meta ao fazer upload da chave pública: Status={}, Body={}",
-                                      clientResponse.statusCode(), errorBody);
-                            return Mono.error(new BusinessException("Falha ao registrar chave pública na Meta: " + errorBody));
-                        })
-                )
-                .bodyToMono(JsonNode.class)
-                .flatMap(postResponseNode -> {
-                    if (!postResponseNode.path("success").asBoolean(false)) {
-                        log.error("API da Meta retornou 'success: false' ao registrar a chave. Resposta: {}", postResponseNode);
-                        return Mono.error(new BusinessException("API da Meta falhou ao registrar a chave pública."));
-                    }
-                    log.info("Empresa ID {}: Chave pública enviada com sucesso. Buscando o ID da chave...", companyId);
-
-                    return getBspWebClient().get().uri(endpoint).retrieve()
-                        .onStatus(HttpStatusCode::isError, clientResponse ->
-                            clientResponse.bodyToMono(String.class)
-                                .flatMap(errorBody -> {
-                                    log.error("Erro da API Meta (GET) ao buscar ID da chave para Phone Number ID {}: Status={}, Body={}",
-                                            company.getMetaPrimaryPhoneNumberId(), clientResponse.statusCode(), errorBody);
-                                    return Mono.error(new BusinessException("Falha ao buscar o ID da chave pública registrada: " + errorBody));
-                                })
-                        )
-                        .bodyToMono(JsonNode.class);
-                })
-                .flatMap(getResponseNode -> {
-                    JsonNode dataArray = getResponseNode.path("data");
-                    if (dataArray.isArray() && !dataArray.isEmpty()) {
-                        String publicKeyId = dataArray.get(0).path("status").asText(null);
-                        if (publicKeyId != null) {
-                            log.info("ID da chave pública encontrado: {}. Salvando na empresa ID {}.", publicKeyId, company.getId());
-                            
-                            // Salva o ID na entidade Company
-                            company.setMetaFlowPublicKeyId(publicKeyId);
-                            companyRepository.save(company); // O save acontece dentro do fluxo reativo
-                            
-                            return Mono.just(publicKeyId); // Retorna o ID
-                        }
-                    }
-                    log.warn("Nenhum ID de chave pública encontrado na resposta GET da Meta: {}", getResponseNode);
-                    return Mono.error(new ResourceNotFoundException("Nenhuma chave pública registrada foi encontrada para este número de telefone após o upload."));
-                });
+        if (successCount == 0) {
+            throw new BusinessException("Falha ao configurar criptografia de Flows. Nenhuma WABA foi atualizada com sucesso.");
+        }
+        
+        log.info("Chave pública de Flows atualizada para {} WABAs da empresa {}.", successCount, company.getName());
     }
 
     @Override
-    public Mono<String> getFlowPublicKeyId(Long companyId) {
+    @Transactional(readOnly = true)
+    public String getFlowPublicKeyId(Long companyId) {
         
          Company company = companyRepository.findById(companyId)
-                .orElseThrow(() -> new ResourceNotFoundException("Empresa com ID " + companyId + " não encontrada."));
-        
-        if (company == null) {
-            return Mono.error(new BusinessException("A empresa do usuário atual não está configurada."));
+                .orElseThrow(() -> new ResourceNotFoundException("Empresa não encontrada"));
+
+        // 1. Descobrir a WABA através dos números
+        String wabaId = phoneNumberRepository.findByCompany(company).stream()
+                .map(WhatsAppPhoneNumber::getWabaId)
+                .filter(id -> id != null && !id.isBlank())
+                .findFirst()
+                .orElseThrow(() -> new BusinessException("Nenhuma WABA identificada para esta empresa (sem números cadastrados)."));
+
+        // 2. Consultar a API da Meta
+        // Endpoint: GET /{waba_id}/flow_json_encryption_public_key
+        String url = graphApiBaseUrl + "/" + wabaId + "/flow_json_encryption_public_key";
+
+        try {
+            JsonNode response = webClientBuilder.build()
+                    .get()
+                    .uri(url)
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + bspSystemUserAccessToken)
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .block();
+
+            // 3. Extrair o ID da chave
+            // A resposta é: { "data": [ { "key_id": "123", ... } ] }
+            if (response != null && response.has("data") && response.get("data").isArray() && !response.get("data").isEmpty()) {
+                // Retorna o primeiro ID encontrado (geralmente é o ativo)
+                return response.get("data").get(0).path("key_id").asText();
+            } else {
+                log.warn("WABA {} não possui chaves de criptografia de Flow configuradas.", wabaId);
+                return null; // Ou lançar exceção se for crítico
+            }
+
+        } catch (Exception e) {
+            log.error("Erro ao buscar Flow Public Key ID na Meta: {}", e.getMessage());
+            throw new BusinessException("Falha ao consultar configuração de criptografia na Meta.");
         }
-
-        if (company.getMetaPrimaryPhoneNumberId() == null || company.getMetaPrimaryPhoneNumberId().isBlank()) {
-            return Mono.error(new BusinessException("O ID do Phone Number da Meta não está configurado."));
-        }
-
-        String endpoint = "/" + company.getMetaPrimaryPhoneNumberId() + "/whatsapp_business_encryption";
-        log.info("Buscando ID da chave pública para o Phone Number ID {}", company.getMetaPrimaryPhoneNumberId());
-
-        return getBspWebClient().get().uri(endpoint).retrieve()
-            .bodyToMono(JsonNode.class)
-            .map(responseNode -> {
-                JsonNode dataArray = responseNode.path("data");
-                if (dataArray.isArray() && !dataArray.isEmpty()) {
-                    String keyId = dataArray.get(0).path("id").asText(null);
-                    if (keyId != null) {
-                        log.info("ID da chave pública encontrado: {}", keyId);
-                        return keyId;
-                    }
-                }
-                log.warn("Nenhum ID de chave pública encontrado na resposta da Meta: {}", responseNode);
-                throw new ResourceNotFoundException("Nenhuma chave pública registrada encontrada para este número de telefone.");
-            });
     }
 
     @Override
@@ -427,5 +410,40 @@ public class PlatformConfigServiceImpl implements PlatformConfigService {
                     marketName, fromStr, toStr, rateStr);
             throw new BusinessException("Formato de número inválido no CSV.");
         }
+    }
+
+    /**
+     * Executa o POST na API da Meta.
+     * Endpoint: POST /{waba_id}/flow_json_encryption_public_key
+     */
+    private void uploadKeyToWaba(String wabaId, String publicKey) {
+        String url = graphApiBaseUrl + "/" + wabaId + "/flow_json_encryption_public_key";
+
+        Map<String, String> body = new HashMap<>();
+        body.put("business_public_key", publicKey);
+
+        JsonNode response = webClientBuilder.build()
+                .post()
+                .uri(url)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + bspSystemUserAccessToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(BodyInserters.fromValue(body))
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .block(); // Bloqueante
+
+        log.info("Sucesso upload chave Flow para WABA {}. Response: {}", wabaId, response);
+    }
+
+    /**
+     * Remove headers e quebras de linha do PEM se necessário.
+     * A Meta geralmente aceita o formato PEM padrão, mas se tiver problemas, use apenas o body.
+     */
+    private String cleanPemKey(String pem) {
+        if (pem == null) return null;
+        return pem
+                .replace("-----BEGIN PUBLIC KEY-----", "")
+                .replace("-----END PUBLIC KEY-----", "")
+                .replaceAll("\\s", ""); // Remove quebras de linha e espaços
     }
 }

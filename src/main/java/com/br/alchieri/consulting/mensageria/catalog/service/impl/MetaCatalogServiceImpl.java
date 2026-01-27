@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
@@ -33,7 +34,9 @@ import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.exception.ResourceNotFoundException;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.MetaBusinessManager;
+import com.br.alchieri.consulting.mensageria.model.WhatsAppPhoneNumber;
 import com.br.alchieri.consulting.mensageria.repository.MetaBusinessManagerRepository;
+import com.br.alchieri.consulting.mensageria.repository.WhatsAppPhoneNumberRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -53,6 +56,7 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
     private final ProductRepository productRepository;
     private final MetaBusinessManagerRepository businessManagerRepository;
     private final ProductSetRepository productSetRepository;
+    private final WhatsAppPhoneNumberRepository phoneNumberRepository;
 
     private final ObjectMapper objectMapper;
 
@@ -366,26 +370,31 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
      * POST /{WABA_ID}/product_catalogs
      */
     private Mono<Void> connectCatalogToWaba(Company company, String metaCatalogId) {
-        if (company.getMetaWabaId() == null) {
-            logger.warn("WABA ID não configurado para empresa {}. Pulo vínculo WABA.", company.getName());
+        
+        List<WhatsAppPhoneNumber> numbers = phoneNumberRepository.findByCompany(company);
+    
+        // Extrai WABA IDs únicos (para não chamar a API 2x para a mesma WABA)
+        Set<String> uniqueWabaIds = numbers.stream()
+                .map(WhatsAppPhoneNumber::getWabaId)
+                .collect(Collectors.toSet());
+
+        if (uniqueWabaIds.isEmpty()) {
+            logger.warn("Nenhuma WABA encontrada para vincular o catálogo.");
             return Mono.empty();
         }
 
-        String endpoint = graphApiBaseUrl + "/" + company.getMetaWabaId() + "/product_catalogs";
-        Map<String, String> body = new HashMap<>();
-        body.put("catalog_id", metaCatalogId);
+        // Dispara vínculo para todas as WABAs encontradas
+        List<Mono<Void>> tasks = uniqueWabaIds.stream().map(wabaId -> {
+            String endpoint = graphApiBaseUrl + "/" + wabaId + "/product_catalogs";
+            Map<String, String> body = new HashMap<>();
+            body.put("catalog_id", metaCatalogId);
+            
+            return webClientBuilder.build().post().uri(endpoint)
+                // ... headers/body ...
+                .retrieve().bodyToMono(JsonNode.class).then();
+        }).toList();
 
-        return webClientBuilder.build()
-                .post()
-                .uri(endpoint)
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + systemAccessToken)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(BodyInserters.fromValue(body))
-                .retrieve()
-                .bodyToMono(JsonNode.class)
-                .doOnSuccess(json -> logger.info("Catálogo {} vinculado à WABA {}", metaCatalogId, company.getMetaWabaId()))
-                .doOnError(e -> logger.error("Falha ao vincular catálogo à WABA: {}", e.getMessage()))
-                .then();
+        return Mono.when(tasks);
     }
 
     /**
@@ -393,26 +402,41 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
      * POST /{PHONE_NUMBER_ID}/whatsapp_business_catalogs
      */
     private Mono<Void> connectCatalogToPhoneNumber(Company company, String metaCatalogId) {
-        if (company.getMetaPrimaryPhoneNumberId() == null) {
-            logger.warn("Phone Number ID não configurado. Pulo vínculo de número.");
+        
+        // 1. Buscar todos os números da empresa
+        List<WhatsAppPhoneNumber> phoneNumbers = phoneNumberRepository.findByCompany(company);
+
+        if (phoneNumbers.isEmpty()) {
+            logger.warn("Nenhum número de telefone encontrado para a empresa {}. O catálogo {} não será vinculado a nenhum perfil.", 
+                    company.getId(), metaCatalogId);
             return Mono.empty();
         }
 
-        String endpoint = graphApiBaseUrl + "/" + company.getMetaPrimaryPhoneNumberId() + "/whatsapp_business_catalogs";
-        Map<String, String> body = new HashMap<>();
-        body.put("catalog_id", metaCatalogId);
+        // 2. Criar uma lista de tarefas (Monos) para vincular cada número
+        List<Mono<Void>> tasks = phoneNumbers.stream().map(phone -> {
+            
+            String endpoint = graphApiBaseUrl + "/" + phone.getPhoneNumberId() + "/whatsapp_business_catalogs";
+            
+            Map<String, String> body = new HashMap<>();
+            body.put("catalog_id", metaCatalogId);
 
-        return webClientBuilder.build()
-                .post()
-                .uri(endpoint)
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + systemAccessToken)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(BodyInserters.fromValue(body))
-                .retrieve()
-                .bodyToMono(JsonNode.class)
-                .doOnSuccess(json -> logger.info("Catálogo {} vinculado ao Número {}", metaCatalogId, company.getMetaPrimaryPhoneNumberId()))
-                .doOnError(e -> logger.error("Falha ao vincular catálogo ao número: {}", e.getMessage()))
-                .then();
+            return webClientBuilder.build()
+                    .post()
+                    .uri(endpoint)
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + systemAccessToken)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(BodyInserters.fromValue(body))
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .doOnSuccess(json -> logger.info("Catálogo {} vinculado com sucesso ao número {} ({})", 
+                            metaCatalogId, phone.getPhoneNumberId(), phone.getAlias()))
+                    .doOnError(e -> logger.warn("Falha ao vincular catálogo {} ao número {}: {}", 
+                            metaCatalogId, phone.getPhoneNumberId(), e.getMessage()))
+                    .then(); // Retorna Mono<Void> e continua mesmo se der erro (log warning)
+        }).toList();
+
+        // 3. Executa todas as vinculações em paralelo e aguarda o término
+        return Mono.when(tasks);
     }
 
     private void processProductBatchSync(Catalog catalog, List<MetaSyncDTOs.MetaProductData> metaProducts) {

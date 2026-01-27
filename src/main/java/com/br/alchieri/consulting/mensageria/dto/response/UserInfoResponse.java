@@ -45,12 +45,6 @@ public class UserInfoResponse {
     private String companyName;
 
     // Campos da Meta que podem ser úteis para o frontend
-    @Schema(description = "ID do Número de Telefone primário da empresa associada.")
-    private String metaPrimaryPhoneNumberId;
-
-    @Schema(description = "ID da WABA da empresa associada.")
-    private String metaWabaId;
-
     @Schema(description = "Status do onboarding da empresa associada.")
     private OnboardingStatus onboardingStatus;
 
@@ -77,8 +71,6 @@ public class UserInfoResponse {
         if (user.getCompany() != null) {
             builder.companyId(user.getCompany().getId());
             builder.companyName(user.getCompany().getName());
-            builder.metaPrimaryPhoneNumberId(user.getCompany().getMetaPrimaryPhoneNumberId());
-            builder.metaWabaId(user.getCompany().getMetaWabaId());
             builder.onboardingStatus(user.getCompany().getOnboardingStatus());
         }
 
