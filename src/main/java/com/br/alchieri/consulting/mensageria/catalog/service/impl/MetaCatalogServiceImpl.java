@@ -1,15 +1,16 @@
 package com.br.alchieri.consulting.mensageria.catalog.service.impl;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -40,16 +41,18 @@ import com.br.alchieri.consulting.mensageria.repository.WhatsAppPhoneNumberRepos
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.collect.Lists;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class MetaCatalogServiceImpl implements MetaCatalogService {
 
-    private static final Logger logger = LoggerFactory.getLogger(MetaCatalogServiceImpl.class);
-    
     private final WebClient.Builder webClientBuilder;
 
     private final CatalogRepository catalogRepository;
@@ -66,11 +69,12 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
     @Value("${whatsapp.api.token}")
     private String systemAccessToken;
 
+    private static final int META_BATCH_SIZE = 100;
+
     @Override
     @Transactional
     public Mono<Catalog> createCatalog(String catalogName, String vertical, Long metaBusinessManagerId, Company company) {
         
-        // 1. Busca o BM específico
         MetaBusinessManager bm = businessManagerRepository.findById(metaBusinessManagerId)
                 .orElseThrow(() -> new BusinessException("Business Manager não encontrado."));
 
@@ -78,11 +82,8 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
             return Mono.error(new BusinessException("Este Business Manager não pertence à sua empresa."));
         }
 
-        // 2. Prepara a chamada para a Meta API
-        // Endpoint: POST /{business_id}/owned_product_catalogs
         String endpoint = graphApiBaseUrl + "/" + bm.getMetaBusinessId() + "/owned_product_catalogs";
 
-        // Se o vertical não for informado, usa "commerce" como padrão seguro
         String finalVertical = (vertical != null && !vertical.isBlank()) ? vertical : "commerce";
         
         Map<String, String> body = new HashMap<>();
@@ -113,86 +114,59 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
                     
                     Catalog savedCatalog = catalogRepository.save(catalog);
 
-                    // --- VINCULAR AO WABA E AO NÚMERO ---
-                    // Encadeia as chamadas de vínculo
                     return connectCatalogToWaba(company, metaCatalogId)
                             .then(connectCatalogToPhoneNumber(company, metaCatalogId))
                             .thenReturn(savedCatalog);
                 })
-                .doOnSuccess(c -> logger.info("Catálogo criado e vinculado: {} (Meta ID: {})", c.getName(), c.getMetaCatalogId()))
-                .doOnError(e -> logger.error("Erro no fluxo de criação de catálogo: {}", e.getMessage()));
+                .doOnSuccess(c -> log.info("Catálogo criado e vinculado: {} (Meta ID: {})", c.getName(), c.getMetaCatalogId()))
+                .doOnError(e -> log.error("Erro no fluxo de criação de catálogo: {}", e.getMessage()));
     }
 
     @Override
     @Transactional
-    public Mono<Void> upsertProducts(List<ProductSyncRequest> productsRequest, Company company) {
-        // 1. Obter Catálogo Padrão (ou criar lógica para selecionar qual catálogo)
-        Catalog catalog = catalogRepository.findByCompanyAndIsDefaultTrue(company)
-                .orElseThrow(() -> new BusinessException("Nenhum catálogo padrão encontrado para esta empresa. Crie um catálogo primeiro."));
+    public void upsertProducts(Long catalogId, List<Product> products) {
+        Catalog catalog = catalogRepository.findById(catalogId)
+                .orElseThrow(() -> new RuntimeException("Catálogo não encontrado"));
 
-        // 2. Persistir Produtos Localmente (Espelhamento)
-        List<BatchItem> batchItems = productsRequest.stream().map(dto -> {
-            
-            // Lógica de Banco Local
-            Product product = productRepository.findByCatalogAndSku(catalog, dto.getSku())
-                    .orElse(new Product());
-            
-            product.setCatalog(catalog);
-            product.setSku(dto.getSku());
-            product.setName(dto.getName());
-            product.setDescription(dto.getDescription());
-            product.setPrice(BigDecimal.valueOf(dto.getPrice()));
-            product.setCurrency(dto.getCurrency());
-            product.setImageUrl(dto.getImageUrl());
-            product.setWebsiteUrl(dto.getWebsiteUrl());
-            product.setBrand(dto.getBrand());
-            product.setInStock(dto.isInStock());
-            
-            productRepository.save(product);
+        // 1. Atualiza no Banco Local
+        List<Product> savedProducts = productRepository.saveAll(products);
 
-            // Mapeamento para Meta Batch API
-            ProductAttributes attrs = ProductAttributes.builder()
-                    .name(dto.getName())
-                    .description(dto.getDescription() != null ? dto.getDescription() : dto.getName())
-                    .availability(dto.isInStock() ? "in stock" : "out of stock")
-                    .condition("new")
-                    .priceAmount((long) (dto.getPrice() * 100))
-                    .currency(dto.getCurrency())
-                    .brand(dto.getBrand())
-                    .url(dto.getWebsiteUrl())
-                    .imageUrl(dto.getImageUrl())
-                    .build();
+        // 2. Prepara requests para a Meta
+        List<BatchItem> allRequests = savedProducts.stream()
+                .map(this::convertToBatchItem)
+                .collect(Collectors.toList());
 
-            return BatchItem.builder()
-                    .method("UPDATE")
-                    .retailerId(dto.getSku())
-                    .data(attrs)
-                    .build();
-        }).collect(Collectors.toList());
+        // 3. Envia em Lotes (Partitioning) para respeitar limites da API
+        List<List<BatchItem>> batches = Lists.partition(allRequests, META_BATCH_SIZE);
 
-        // 3. Enviar para a Meta
-        return sendBatchRequest(catalog.getMetaCatalogId(), batchItems);
+        for (List<BatchItem> batch : batches) {
+            sendBatchRequest(catalog.getMetaCatalogId(), batch, systemAccessToken);
+        }
     }
 
     @Override
     @Transactional
-    public Mono<Void> deleteProducts(List<String> skus, Company company) {
-        Catalog catalog = catalogRepository.findByCompanyAndIsDefaultTrue(company)
-                .orElseThrow(() -> new BusinessException("Catálogo não encontrado."));
+    public void deleteProducts(Long catalogId, List<String> skus) {
+        Catalog catalog = catalogRepository.findById(catalogId)
+                .orElseThrow(() -> new RuntimeException("Catálogo não encontrado"));
+        
+        // 1. Remove do Banco Local
+        productRepository.deleteAllByCatalogIdAndSkuIn(catalogId, skus);
 
-        // Remove do Banco Local
-        skus.forEach(sku -> {
-            productRepository.findByCatalogAndSku(catalog, sku).ifPresent(productRepository::delete);
-        });
+        // 2. Prepara requests de deleção para a Meta
+        List<BatchItem> allRequests = skus.stream()
+                .map(sku -> BatchItem.builder()
+                        .method("DELETE")
+                        .retailerId(sku)
+                        .build())
+                .collect(Collectors.toList());
 
-        // Remove da Meta
-        List<BatchItem> batchItems = skus.stream().map(sku -> BatchItem.builder()
-                .method("DELETE")
-                .retailerId(sku)
-                .build()
-        ).collect(Collectors.toList());
+        // 3. Envia em Lotes
+        List<List<BatchItem>> batches = Lists.partition(allRequests, META_BATCH_SIZE);
 
-        return sendBatchRequest(catalog.getMetaCatalogId(), batchItems);
+        for (List<BatchItem> batch : batches) {
+            sendBatchRequest(catalog.getMetaCatalogId(), batch, systemAccessToken);
+        }
     }
 
     @Override
@@ -210,7 +184,7 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
 
         // 2. Iterar sobre cada BM para buscar seus catálogos
         for (MetaBusinessManager bm : bms) {
-            logger.info("Sincronizando catálogos do Business: {} ({})", bm.getName(), bm.getMetaBusinessId());
+            log.info("Sincronizando catálogos do Business: {} ({})", bm.getName(), bm.getMetaBusinessId());
             
             String url = graphApiBaseUrl + "/" + bm.getMetaBusinessId() + "/owned_product_catalogs";
 
@@ -247,53 +221,66 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
                             connectCatalogToWaba(company, catalog.getMetaCatalogId()).block();
                             connectCatalogToPhoneNumber(company, catalog.getMetaCatalogId()).block();
                         } catch (Exception e) {
-                            logger.warn("Não foi possível vincular automaticamente o catálogo {} durante o sync: {}", catalog.getName(), e.getMessage());
+                            log.warn("Não foi possível vincular automaticamente o catálogo {} durante o sync: {}", catalog.getName(), e.getMessage());
                         }
 
                         totalSynced++;
                     }
                 }
             } catch (Exception e) {
-                logger.error("Erro ao buscar catálogos do BM {}: {}", bm.getMetaBusinessId(), e.getMessage());
+                log.error("Erro ao buscar catálogos do BM {}: {}", bm.getMetaBusinessId(), e.getMessage());
                 // Continua para o próximo BM mesmo se um falhar
             }
         }
-        logger.info("Sincronização concluída. Total de catálogos: {}", totalSynced);
+        log.info("Sincronização concluída. Total de catálogos: {}", totalSynced);
     }
 
     @Override
     @Transactional
-    public void syncProductsFromMeta(Long localCatalogId, Company company) {
-        Catalog catalog = catalogRepository.findById(localCatalogId)
-                .orElseThrow(() -> new ResourceNotFoundException("Catálogo não encontrado"));
+    public void syncProductsFromMeta(Long catalogId) {
+        Catalog catalog = catalogRepository.findById(catalogId)
+                .orElseThrow(() -> new RuntimeException("Catálogo não encontrado"));
 
-        if (!catalog.getCompany().getId().equals(company.getId())) {
-            throw new BusinessException("Acesso negado ao catálogo.");
-        }
+        String metaCatalogId = catalog.getMetaCatalogId();
+
+        // Conjunto para rastrear quais SKUs a Meta retornou
+        Set<String> metaSkus = new HashSet<>();
         
-        // Validação extra: O catálogo tem um ID da Meta?
-        if (catalog.getMetaCatalogId() == null) {
-            throw new BusinessException("Catálogo não vinculado à Meta.");
-        }
+        // Carrega SKUs locais para comparação posterior
+        Set<String> localSkus = productRepository.findAllSkusByCatalogId(catalogId);
 
-        String url = graphApiBaseUrl + "/" + catalog.getMetaCatalogId() + "/products";
-        String fields = "id,retailer_id,name,description,price,image_url,availability,currency";
+        log.info("Iniciando sincronização full para catálogo {}. SKUs locais atuais: {}", catalogId, localSkus.size());
 
-        // Paginação simplificada (pode evoluir para loop reactivo com expand())
-        webClientBuilder.build().get()
-                .uri(uriBuilder -> uriBuilder
-                    .path(url) // Se url for completa, use .uri(url)
-                    .queryParam("access_token", systemAccessToken)
-                    .queryParam("fields", fields)
-                    .queryParam("limit", 100)
-                    .build())
-                .retrieve()
-                .bodyToMono(MetaSyncDTOs.MetaProductListResponse.class)
-                .subscribe(response -> {
-                    if (response.getData() != null) {
-                        processProductBatchSync(catalog, response.getData());
+        fetchProductsRecursive(metaCatalogId, systemAccessToken)
+            .doOnNext(productNode -> {
+                String sku = productNode.path("retailer_id").asText();
+                if (sku != null && !sku.isBlank()) {
+                    metaSkus.add(sku);
+                    processSingleProductSync(catalog, productNode);
+                }
+            })
+            .doOnComplete(() -> {
+                // Lógica de "Limpeza" (Delete Orphans)
+                // Se estava no local (localSkus), mas não veio da Meta (metaSkus) -> DELETAR
+                localSkus.removeAll(metaSkus);
+
+                if (!localSkus.isEmpty()) {
+                    log.info("Detectados {} produtos deletados na Meta. Removendo localmente...", localSkus.size());
+                    
+                    // Deleta em lotes para não estourar o limite de parâmetros do SQL (IN clause)
+                    List<List<String>> deleteBatches = Lists.partition(new ArrayList<>(localSkus), 500);
+                    for (List<String> batch : deleteBatches) {
+                        productRepository.deleteAllByCatalogIdAndSkuIn(catalogId, batch);
                     }
-                }, error -> logger.error("Erro ao sincronizar produtos: ", error));
+                } else {
+                    log.info("Sincronização concluída. Nenhum produto para deletar.");
+                }
+                
+                catalog.setUpdatedAt(LocalDateTime.now());
+                catalogRepository.save(catalog);
+            })
+            .doOnError(e -> log.error("Erro fatal durante sincronização do catálogo " + catalogId, e))
+            .subscribe();
     }
 
     @Override
@@ -361,8 +348,8 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
                     
                     return productSetRepository.save(productSet);
                 })
-                .doOnSuccess(ps -> logger.info("Product Set '{}' criado com sucesso. Meta ID: {}", ps.getName(), ps.getMetaProductSetId()))
-                .doOnError(e -> logger.error("Erro ao criar Product Set na Meta: {}", e.getMessage()));
+                .doOnSuccess(ps -> log.info("Product Set '{}' criado com sucesso. Meta ID: {}", ps.getName(), ps.getMetaProductSetId()))
+                .doOnError(e -> log.error("Erro ao criar Product Set na Meta: {}", e.getMessage()));
     }
 
     /**
@@ -379,7 +366,7 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
                 .collect(Collectors.toSet());
 
         if (uniqueWabaIds.isEmpty()) {
-            logger.warn("Nenhuma WABA encontrada para vincular o catálogo.");
+            log.warn("Nenhuma WABA encontrada para vincular o catálogo.");
             return Mono.empty();
         }
 
@@ -407,7 +394,7 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
         List<WhatsAppPhoneNumber> phoneNumbers = phoneNumberRepository.findByCompany(company);
 
         if (phoneNumbers.isEmpty()) {
-            logger.warn("Nenhum número de telefone encontrado para a empresa {}. O catálogo {} não será vinculado a nenhum perfil.", 
+            log.warn("Nenhum número de telefone encontrado para a empresa {}. O catálogo {} não será vinculado a nenhum perfil.", 
                     company.getId(), metaCatalogId);
             return Mono.empty();
         }
@@ -428,9 +415,9 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
                     .body(BodyInserters.fromValue(body))
                     .retrieve()
                     .bodyToMono(JsonNode.class)
-                    .doOnSuccess(json -> logger.info("Catálogo {} vinculado com sucesso ao número {} ({})", 
+                    .doOnSuccess(json -> log.info("Catálogo {} vinculado com sucesso ao número {} ({})", 
                             metaCatalogId, phone.getPhoneNumberId(), phone.getAlias()))
-                    .doOnError(e -> logger.warn("Falha ao vincular catálogo {} ao número {}: {}", 
+                    .doOnError(e -> log.warn("Falha ao vincular catálogo {} ao número {}: {}", 
                             metaCatalogId, phone.getPhoneNumberId(), e.getMessage()))
                     .then(); // Retorna Mono<Void> e continua mesmo se der erro (log warning)
         }).toList();
@@ -462,28 +449,103 @@ public class MetaCatalogServiceImpl implements MetaCatalogService {
                 }
                 product.setCurrency(metaProd.getCurrency());
             } catch (Exception e) {
-                logger.warn("Erro ao parsear preço do produto {}: {}", metaProd.getRetailerId(), e.getMessage());
+                log.warn("Erro ao parsear preço do produto {}: {}", metaProd.getRetailerId(), e.getMessage());
             }
 
             productRepository.save(product);
         }
-        logger.info("Lote de produtos sincronizado para o catálogo {}", catalog.getId());
+        log.info("Lote de produtos sincronizado para o catálogo {}", catalog.getId());
     }
 
-    private Mono<Void> sendBatchRequest(String catalogId, List<BatchItem> items) {
-        MetaProductBatchRequest request = MetaProductBatchRequest.builder().requests(items).build();
-        String endpoint = graphApiBaseUrl + "/" + catalogId + "/batch";
+    private void sendBatchRequest(String metaCatalogId, List<BatchItem> requests, String accessToken) {
+        String url = graphApiBaseUrl + "/" + metaCatalogId + "/batch";
+        
+        MetaProductBatchRequest payload = new MetaProductBatchRequest();
+        payload.setRequests(requests);
 
-        return webClientBuilder.build()
-                .post()
-                .uri(endpoint)
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + systemAccessToken)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(BodyInserters.fromValue(request))
+        try {
+            webClientBuilder.build().post()
+                    .uri(url)
+                    .header("Authorization", "Bearer " + accessToken)
+                    .bodyValue(payload)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .subscribe(
+                        response -> log.debug("Batch enviado com sucesso para Meta: {} itens", requests.size()),
+                        error -> log.error("Erro ao enviar batch para Meta: ", error)
+                    );
+        } catch (Exception e) {
+            log.error("Erro ao montar requisição batch", e);
+        }
+    }
+
+    private Flux<JsonNode> fetchProductsRecursive(String metaCatalogId, String accessToken) {
+        String initialUrl = graphApiBaseUrl + "/" + metaCatalogId + "/products?fields=retailer_id,name,description,price,currency,image_url,availability&limit=1000";
+
+        return fetchPage(initialUrl, accessToken)
+                .expand(response -> {
+                    if (response.has("paging") && response.path("paging").has("next")) {
+                        String nextUrl = response.path("paging").path("next").asText();
+                        return fetchPage(nextUrl, accessToken);
+                    }
+                    return Mono.empty();
+                })
+                .flatMap(response -> {
+                    if (response.has("data")) {
+                        return Flux.fromIterable(response.get("data"));
+                    }
+                    return Flux.empty();
+                });
+    }
+
+    private Mono<JsonNode> fetchPage(String url, String accessToken) {
+        return webClientBuilder.build().get()
+                .uri(url)
+                .header("Authorization", "Bearer " + accessToken)
                 .retrieve()
-                .bodyToMono(JsonNode.class)
-                .doOnSuccess(r -> logger.info("Sincronização com Meta concluída para o catálogo {}", catalogId))
-                .doOnError(e -> logger.error("Erro na sincronização Meta: {}", e.getMessage()))
-                .then();
+                .bodyToMono(JsonNode.class);
+    }
+
+    private void processSingleProductSync(Catalog catalog, JsonNode node) {
+        try {
+            String sku = node.path("retailer_id").asText();
+            Product product = productRepository.findByCatalogAndSku(catalog, sku)
+                    .orElse(new Product());
+
+            product.setCatalog(catalog);
+            product.setSku(sku);
+            product.setName(node.path("name").asText());
+            product.setDescription(node.path("description").asText());
+            product.setImageUrl(node.path("image_url").asText());
+            
+            // Tratamento simples de preço (pode precisar de melhor parsing dependendo do formato "19.99")
+            String priceStr = node.path("price").asText().replaceAll("[^0-9.]", "");
+            if (!priceStr.isBlank()) {
+                product.setPrice(new java.math.BigDecimal(priceStr));
+            }
+            product.setCurrency(node.path("currency").asText("BRL"));
+            
+            String availability = node.path("availability").asText();
+            product.setInStock("in stock".equalsIgnoreCase(availability));
+
+            productRepository.save(product);
+        } catch (Exception e) {
+            log.error("Erro ao processar produto individual no sync: {}", node, e);
+        }
+    }
+
+    private BatchItem convertToBatchItem(Product product) {
+        // Implementação simplificada do conversor para o formato da Meta
+        return BatchItem.builder()
+                .method("UPDATE") // UPDATE funciona como Upsert na Meta
+                .retailerId(product.getSku())
+                .data(ProductAttributes.builder()
+                        .name(product.getName())
+                        .description(product.getDescription())
+                        .availability(product.isInStock() ? "in stock" : "out of stock")
+                        .currency(product.getCurrency())
+                        .imageUrl(product.getImageUrl())
+                        .build())
+                .build();
     }
 }

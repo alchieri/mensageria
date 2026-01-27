@@ -1,6 +1,8 @@
 package com.br.alchieri.consulting.mensageria.catalog.controller;
 
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -14,6 +16,7 @@ import com.br.alchieri.consulting.mensageria.catalog.dto.request.CreateCatalogRe
 import com.br.alchieri.consulting.mensageria.catalog.dto.request.CreateProductSetRequest;
 import com.br.alchieri.consulting.mensageria.catalog.dto.request.ProductSyncRequest;
 import com.br.alchieri.consulting.mensageria.catalog.model.Catalog;
+import com.br.alchieri.consulting.mensageria.catalog.model.Product;
 import com.br.alchieri.consulting.mensageria.catalog.model.ProductSet;
 import com.br.alchieri.consulting.mensageria.catalog.service.MetaCatalogService;
 import com.br.alchieri.consulting.mensageria.dto.response.ApiResponse;
@@ -53,9 +56,11 @@ public class CatalogController {
         return ResponseEntity.ok(new ApiResponse(true, "Catálogo criado com sucesso na Meta.", catalog));
     }
 
-    @PostMapping("/products")
+    @PostMapping("/{catalogId}/products")
     @Operation(summary = "Sincronizar Produtos (Upsert)", description = "Cria ou Atualiza produtos no catálogo da empresa.")
-    public ResponseEntity<ApiResponse> upsertProducts(@RequestBody @Valid List<ProductSyncRequest> products) {
+    public ResponseEntity<ApiResponse> upsertProducts(@PathVariable Long catalogId, 
+                @RequestBody @Valid List<ProductSyncRequest> dtos) {
+        
         User currentUser = securityUtils.getAuthenticatedUser();
         Company company = currentUser.getCompany();
 
@@ -63,20 +68,36 @@ public class CatalogController {
             return ResponseEntity.badRequest().body(new ApiResponse(false, "Usuário não vinculado a uma empresa.", null));
         }
 
-        metaCatalogService.upsertProducts(products, company).block();
+        List<Product> products = dtos.stream().map(dto -> {
+            Product p = new Product();
+            p.setSku(dto.getSku());
+            p.setName(dto.getName());
+            p.setDescription(dto.getDescription());
+            p.setImageUrl(dto.getImageUrl());
+            p.setWebsiteUrl(dto.getWebsiteUrl());
+            p.setBrand(dto.getBrand());
+            p.setInStock(dto.isInStock());
+            p.setCurrency(dto.getCurrency());
+            if (dto.getPrice() != null) {
+                p.setPrice(BigDecimal.valueOf(dto.getPrice()));
+            }
+            return p;
+        }).collect(Collectors.toList());
 
-        return ResponseEntity.ok(new ApiResponse(true, "Produtos enviados para processamento no catálogo.", null));
+        metaCatalogService.upsertProducts(catalogId, products);
+
+        return ResponseEntity.ok(new ApiResponse(true, "Lote de produtos enviado para processamento assíncrono.", null));
     }
 
-    @DeleteMapping("/products")
+    @DeleteMapping("/{catalogId}/products")
     @Operation(summary = "Deletar Produtos", description = "Remove produtos do catálogo informando os SKUs.")
-    public ResponseEntity<ApiResponse> deleteProducts(@RequestBody List<String> skus) {
-        User currentUser = securityUtils.getAuthenticatedUser();
-        Company company = currentUser.getCompany();
+    public ResponseEntity<ApiResponse> deleteProducts(
+            @PathVariable Long catalogId,
+            @RequestBody List<String> skus) {
+        
+        metaCatalogService.deleteProducts(catalogId, skus);
 
-        metaCatalogService.deleteProducts(skus, company).block();
-
-        return ResponseEntity.ok(new ApiResponse(true, "Solicitação de exclusão enviada.", null));
+        return ResponseEntity.ok(new ApiResponse(true, "Solicitação de exclusão enviada para processamento.", null));
     }
 
     @PostMapping("/sync")
@@ -88,11 +109,11 @@ public class CatalogController {
     }
 
     @PostMapping("/{catalogId}/products/sync")
-    @Operation(summary = "Sincronizar Produtos", description = "Busca produtos de um catálogo específico na Meta e cria/atualiza no banco local.")
+    @Operation(summary = "Sincronizar Produtos da Meta", description = "Busca produtos de um catálogo específico na Meta e cria/atualiza no banco local.")
     public ResponseEntity<ApiResponse> syncProducts(@PathVariable Long catalogId) {
-        User user = securityUtils.getAuthenticatedUser();
-        metaCatalogService.syncProductsFromMeta(catalogId, user.getCompany());
-        return ResponseEntity.ok(new ApiResponse(true, "Sincronização de produtos iniciada.", null));
+        // A validação de empresa deve ser feita internamente ou via filtro, mas a assinatura mudou para apenas ID
+        metaCatalogService.syncProductsFromMeta(catalogId);
+        return ResponseEntity.ok(new ApiResponse(true, "Sincronização de produtos iniciada (Background).", null));
     }
 
     @PostMapping("/{catalogId}/product-sets")
@@ -108,7 +129,7 @@ public class CatalogController {
                 request.getName(),
                 request.getProductRetailerIds(),
                 user.getCompany()
-        ).block(); // Block para manter síncrono no controller
+        ).block();
 
         return ResponseEntity.ok(new ApiResponse(true, "Product Set criado com sucesso.", productSet));
     }
