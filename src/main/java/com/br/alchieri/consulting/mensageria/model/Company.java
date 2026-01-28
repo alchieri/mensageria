@@ -54,19 +54,8 @@ public class Company {
     @Column(nullable = false, unique = true)
     private String name; // Nome da empresa cliente
 
-    // @Column(nullable = true, unique = true) // Pode ser nulo se ainda não configurado, mas único quando preenchido
-    // private String metaWabaId;
-
-    // @Column(nullable = true) // O principal Phone Number ID da empresa, pode haver outros
-    // @Deprecated
-    // private String metaPrimaryPhoneNumberId;
-
     @OneToMany(mappedBy = "company", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<WhatsAppPhoneNumber> phoneNumbers = new ArrayList<>();
-
-    // @Column(nullable = true)
-    // @Deprecated
-    // private String facebookBusinessManagerId;
 
     @Size(max = 20)
     @Column(length = 20, unique = true, nullable = true) // CNPJ/CPF, único se preenchido
@@ -119,6 +108,9 @@ public class Company {
 
     @OneToMany(mappedBy = "company", cascade = CascadeType.ALL)
     private List<MetaBusinessManager> businessManagers = new ArrayList<>();
+
+    @Column(name = "checkout_address_flow_id")
+    private String checkoutAddressFlowId;
 
     // Configuração de TTL da Sessão do Bot (em Minutos)
     // Default: 30 minutos

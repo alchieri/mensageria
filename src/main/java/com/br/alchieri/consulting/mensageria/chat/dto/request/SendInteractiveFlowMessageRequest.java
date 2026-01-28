@@ -33,6 +33,8 @@ public class SendInteractiveFlowMessageRequest {
     @Schema(description = "Nome técnico (namespace) do seu Flow publicado.", example = "agendamento_v1", requiredMode = Schema.RequiredMode.REQUIRED)
     private String flowName; // ou flowId
 
+    private String flowId;
+
     @NotBlank(message = "O texto do botão (CTA) é obrigatório.")
     @Size(max = 20, message = "O texto do botão CTA não pode exceder 20 caracteres.")
     @Schema(description = "Texto do botão que o usuário clica para abrir o Flow.", example = "Preencher Formulário", requiredMode = Schema.RequiredMode.REQUIRED)

@@ -28,4 +28,6 @@ public class CreateCompanyRequest {
     private Boolean enabled = true;
     @Schema(description = "Tempo de inatividade (em minutos) para expirar a sessão do bot.", example = "30")
     private Integer botSessionTtl;
+    @Schema(description = "ID do Flow do Meta para coleta de endereço no checkout.")
+    private String checkoutAddressFlowId;
 }

@@ -9,6 +9,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import com.br.alchieri.consulting.mensageria.dto.cart.CartDTO;
+import com.br.alchieri.consulting.mensageria.model.Address;
 
 import jakarta.persistence.Column;
 import lombok.AllArgsConstructor;
@@ -38,6 +39,8 @@ public class UserSession implements Serializable {
     private String assignedUserEmail;   // Email do atendente
     private String assignmentTime;      // Quando o atendimento começou (ISO String)
 
+    // --- AUDITORIA ---
+
     @Column(nullable = false, updatable = false)
     @CreationTimestamp
     private LocalDateTime createdAt;
@@ -51,6 +54,8 @@ public class UserSession implements Serializable {
 
     // O Carrinho vive aqui enquanto a sessão durar (TTL)
     private CartDTO cart = new CartDTO();
+
+    private Address tempAddress; // Endereço temporário durante o fluxo
 
     public void addContextData(String key, String value) {
         if (this.contextData == null) {

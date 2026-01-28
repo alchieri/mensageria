@@ -83,6 +83,14 @@ public class BotEngineServiceImpl implements BotEngineService {
             return;
         }
 
+        if (ConversationState.FILLING_ADDRESS.name().equals(state)) {
+            // Assume-se que 'input' aqui contém o JSON da resposta do Flow
+            // Se o seu Webhook passar apenas texto simples, você precisará ajustar o Controller 
+            // para passar o response_json do nfm_reply
+            commerceHandler.processAddressData(input, contact, session, systemUser, channel);
+            return;
+        }
+
         if ("CHECKOUT_TRIGGER".equals(input)) {
             commerceHandler.startCheckoutFlow(contact, session, systemUser, channel);
             return;

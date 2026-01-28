@@ -11,6 +11,7 @@ import org.hibernate.annotations.FilterDef;
 import org.hibernate.annotations.ParamDef;
 
 import com.br.alchieri.consulting.mensageria.chat.model.Contact;
+import com.br.alchieri.consulting.mensageria.model.Address;
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.WhatsAppPhoneNumber;
 import com.br.alchieri.consulting.mensageria.model.enums.OrderStatus;
@@ -28,6 +29,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
+import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
 import lombok.Data;
 
@@ -49,6 +51,9 @@ public class Order {
     @ManyToOne
     @JoinColumn(name = "contact_id", nullable = false)
     private Contact contact;
+
+    @OneToOne(cascade = CascadeType.ALL) 
+    private Address deliveryAddress;
 
     @ManyToOne
     @JoinColumn(name = "channel_id") // Por qual número entrou o pedido

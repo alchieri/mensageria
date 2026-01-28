@@ -11,6 +11,7 @@ import com.br.alchieri.consulting.mensageria.chat.model.Contact;
 import com.br.alchieri.consulting.mensageria.dto.cart.CartDTO;
 import com.br.alchieri.consulting.mensageria.dto.cart.CartItemDTO;
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
+import com.br.alchieri.consulting.mensageria.model.Address;
 import com.br.alchieri.consulting.mensageria.model.WhatsAppPhoneNumber;
 import com.br.alchieri.consulting.mensageria.model.cart.Order;
 import com.br.alchieri.consulting.mensageria.model.cart.OrderItem;
@@ -58,7 +59,7 @@ public class CartServiceImpl implements CartService {
 
     @Transactional
     @Override
-    public Order checkout(UserSession session, Contact contact, WhatsAppPhoneNumber channel) {
+    public Order checkout(UserSession session, Contact contact, WhatsAppPhoneNumber channel, Address deliveryAddress) {
         
         CartDTO cart = session.getCart();
         
@@ -82,6 +83,10 @@ public class CartServiceImpl implements CartService {
         order.setTotalAmount(cart.getTotalAmount());
         if (!cart.getItems().isEmpty()) {
             order.setCurrency(cart.getItems().get(0).getCurrency());
+        }
+
+        if (deliveryAddress != null) {
+            order.setDeliveryAddress(deliveryAddress);
         }
 
         for (CartItemDTO cartItem : cart.getItems()) {

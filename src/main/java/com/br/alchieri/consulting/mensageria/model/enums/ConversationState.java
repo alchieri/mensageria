@@ -9,5 +9,6 @@ public enum ConversationState {
     CONFIRMING_ORDER,               // Esperando usuário confirmar pedido (checkout)
     ORDER_COMPLETED,                // Pedido finalizado
     SELECTING_PAYMENT_METHOD,       // Usuário escolhendo método de pagamento
-    WAITING_PAYMENT_CONFIRMATION    // Esperando confirmação de pagamento
+    WAITING_PAYMENT_CONFIRMATION,   // Esperando confirmação de pagamento
+    FILLING_ADDRESS,                  // Usuário preenchendo endereço de entrega
 }

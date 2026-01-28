@@ -1,12 +1,17 @@
 package com.br.alchieri.consulting.mensageria.chat.service.impl;
 
+import java.util.Map;
+
 import org.springframework.stereotype.Service;
 
+import com.br.alchieri.consulting.mensageria.chat.dto.request.SendInteractiveFlowMessageRequest;
+import com.br.alchieri.consulting.mensageria.chat.dto.request.SendInteractiveFlowMessageRequest.FlowActionPayload;
 import com.br.alchieri.consulting.mensageria.chat.dto.request.SendTextMessageRequest;
 import com.br.alchieri.consulting.mensageria.chat.model.Contact;
 import com.br.alchieri.consulting.mensageria.chat.service.WhatsAppCloudApiService;
 import com.br.alchieri.consulting.mensageria.dto.cart.CartDTO;
 import com.br.alchieri.consulting.mensageria.dto.cart.CartItemDTO;
+import com.br.alchieri.consulting.mensageria.model.Address;
 import com.br.alchieri.consulting.mensageria.model.User;
 import com.br.alchieri.consulting.mensageria.model.WhatsAppPhoneNumber;
 import com.br.alchieri.consulting.mensageria.model.cart.Order;
@@ -16,6 +21,8 @@ import com.br.alchieri.consulting.mensageria.model.redis.UserSession;
 import com.br.alchieri.consulting.mensageria.payment.service.PaymentService;
 import com.br.alchieri.consulting.mensageria.service.CartService;
 import com.br.alchieri.consulting.mensageria.service.impl.SessionService;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,33 +44,97 @@ public class CommerceFlowHandler {
     private final CartService cartService;
     private final PaymentService paymentService;
 
+    private final ObjectMapper objectMapper;
+
     // --- ENTRY POINT: Início do Checkout ---
     
     public void startCheckoutFlow(Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
+        
         CartDTO cart = session.getCart();
         if (cart.isEmpty()) {
             sendText(contact, "Seu carrinho está vazio.", channel, systemUser);
             return;
         }
 
+        Address address = session.getTempAddress(); 
+
+        if (address == null) {
+
+            String flowId = contact.getCompany().getCheckoutAddressFlowId();
+            
+            if (flowId != null && !flowId.isBlank()) {
+                sendAddressFlow(contact, channel, systemUser, flowId);
+                sessionService.updateState(session, ConversationState.FILLING_ADDRESS);
+            } else {
+                log.warn("Empresa {} não tem Flow de Endereço configurado. Usando fallback.", contact.getCompany().getName());
+                sendText(contact, "Por favor, digite seu endereço completo (Rua, Número, Bairro, Cidade - UF):", channel, systemUser);
+            }
+        } else {
+            showOrderSummary(contact, session, systemUser, channel);
+        }
+    }
+
+    // --- STEP 0.5: Recebimento dos Dados do Flow ---
+
+    public void processAddressData(String jsonResponse, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
+        try {
+            // Parse do JSON retornado pelo Flow (nfm_reply)
+            Map<String, Object> data = objectMapper.readValue(jsonResponse, new TypeReference<Map<String, Object>>() {});
+            
+            Address newAddress = new Address();
+            newAddress.setPostalCode((String) data.get("cep"));
+            newAddress.setStreet((String) data.get("rua"));
+            newAddress.setNumber((String) data.get("numero"));
+            newAddress.setComplement((String) data.get("complemento"));
+            newAddress.setNeighborhood((String) data.get("bairro"));
+            newAddress.setCity((String) data.get("cidade"));
+            newAddress.setState((String) data.get("estado")); // UF
+            
+            // Salva na sessão temporária
+            session.setTempAddress(newAddress);
+            sessionService.saveSession(session);
+
+            sendText(contact, "📍 Endereço recebido com sucesso!", channel, systemUser);
+
+            // Continua para o resumo
+            showOrderSummary(contact, session, systemUser, channel);
+
+        } catch (Exception e) {
+            log.error("Erro ao processar endereço do flow", e);
+            sendText(contact, "Houve um erro ao ler o endereço. Poderia digitar manualmente?", channel, systemUser);
+            // Fallback ou reset
+        }
+    }
+
+    // --- STEP 1: Resumo do Pedido (Refatorado) ---
+
+    private void showOrderSummary(Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
+        
+        CartDTO cart = session.getCart();
+        Address addr = session.getTempAddress();
+
         StringBuilder sb = new StringBuilder("🛒 *Resumo do Pedido:*\n\n");
         for (CartItemDTO item : cart.getItems()) {
             sb.append(String.format("- %dx %s (Total: %s)\n", item.getQuantity(), item.getName(), item.getTotal()));
         }
+        
+        sb.append("\n📍 *Entrega em:* " + addr.getStreet() + ", " + addr.getNumber() + " - " + addr.getCity());
         sb.append("\n💰 *Total Geral: " + cart.getTotalAmount() + "*\n");
         sb.append("\nDeseja finalizar o pedido? Digite *Sim* para confirmar ou *Não* para cancelar.");
 
         sendText(contact, sb.toString(), channel, systemUser);
-        
         sessionService.updateState(session, ConversationState.CONFIRMING_ORDER);
     }
 
-    // --- STEP 1: Confirmação do Pedido ---
+    // --- STEP 2: Confirmação do Pedido ---
 
     public void processOrderConfirmation(String input, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
         if (input.toLowerCase().contains("sim")) {
             try {
-                Order order = cartService.checkout(session, contact, channel);
+                // Recupera o endereço da sessão
+                Address deliveryAddr = session.getTempAddress();
+
+                Order order = cartService.checkout(session, contact, channel, deliveryAddr);
                 
                 // Salva o ID do pedido no contexto da sessão
                 session.addContextData("current_order_id", order.getId().toString());
@@ -90,7 +161,7 @@ public class CommerceFlowHandler {
         }
     }
 
-    // --- STEP 2: Seleção de Pagamento ---
+    // --- STEP 3: Seleção de Pagamento ---
 
     public void processPaymentSelection(String input, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
         String orderIdStr = session.getContextData("current_order_id");
@@ -145,7 +216,7 @@ public class CommerceFlowHandler {
         }
     }
 
-    // --- STEP 3: Espera e Suporte (UX) ---
+    // --- STEP 4: Espera e Suporte (UX) ---
 
     public void processPaymentWait(String input, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
         String lowerInput = input.toLowerCase().trim();
@@ -176,6 +247,24 @@ public class CommerceFlowHandler {
         } else {
             sendText(contact, "Ainda aguardando. Digite *Pix* para ver o código ou *Sair* para finalizar.", channel, systemUser);
         }
+    }
+
+    private void sendAddressFlow(Contact contact, WhatsAppPhoneNumber channel, User systemUser, String flowId) {
+        SendInteractiveFlowMessageRequest req = new SendInteractiveFlowMessageRequest();
+        req.setTo(contact.getPhoneNumber());
+        req.setFromPhoneNumberId(channel.getPhoneNumberId());
+        req.setFlowName("address_collection"); // Nome do fluxo na Meta
+        req.setFlowId(flowId);
+        req.setBodyText("Para calcular o frete e entregar seu pedido, precisamos do seu endereço. Clique abaixo 👇");
+        req.setFlowCta("Preencher Endereço");
+        req.setMode("published"); // Use "draft" se estiver testando sem publicar
+        req.setFlowAction("navigate");
+
+        FlowActionPayload payload = new FlowActionPayload();
+        payload.setScreen("ADDRESS_SCREEN"); // Nome da tela inicial no seu JSON do Flow
+        req.setFlowActionPayload(payload);
+
+        whatsAppService.sendInteractiveFlowMessage(req, systemUser).subscribe();
     }
 
     // Helper privado para simplificar envio de texto
