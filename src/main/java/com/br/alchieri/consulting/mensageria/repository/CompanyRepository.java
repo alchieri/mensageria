@@ -13,8 +13,13 @@ import com.br.alchieri.consulting.mensageria.model.Company;
 public interface CompanyRepository extends JpaRepository<Company, Long> {
 
     Optional<Company> findByName(String name);
-    Optional<Company> findByMetaWabaId(String metaWabaId);
-    Optional<Company> findByMetaPrimaryPhoneNumberId(String metaPhoneNumberId);
+
+    @Query("SELECT c FROM Company c JOIN c.phoneNumbers p WHERE p.wabaId = :metaWabaId")
+    Optional<Company> findByMetaWabaId(@Param("metaWabaId") String metaWabaId);
+
+    @Query("SELECT c FROM Company c JOIN c.phoneNumbers p WHERE p.phoneNumberId = :metaPhoneNumberId")
+    Optional<Company> findByMetaPrimaryPhoneNumberId(@Param("metaPhoneNumberId") String metaPhoneNumberId);
+
     Optional<Company> findByDocumentNumber(String documentNumber);
 
     @Query("SELECT comp FROM Company comp " +
