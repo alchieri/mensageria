@@ -76,33 +76,46 @@ public class CommerceFlowHandler {
 
     // --- STEP 0.5: Recebimento dos Dados do Flow ---
 
-    public void processAddressData(String jsonResponse, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
-        try {
-            // Parse do JSON retornado pelo Flow (nfm_reply)
-            Map<String, Object> data = objectMapper.readValue(jsonResponse, new TypeReference<Map<String, Object>>() {});
-            
-            Address newAddress = new Address();
-            newAddress.setPostalCode((String) data.get("cep"));
-            newAddress.setStreet((String) data.get("rua"));
-            newAddress.setNumber((String) data.get("numero"));
-            newAddress.setComplement((String) data.get("complemento"));
-            newAddress.setNeighborhood((String) data.get("bairro"));
-            newAddress.setCity((String) data.get("cidade"));
-            newAddress.setState((String) data.get("estado")); // UF
-            
-            // Salva na sessão temporária
+    public void processAddressData(String input, Contact contact, UserSession session, User systemUser, WhatsAppPhoneNumber channel) {
+        
+        Address newAddress = null;
+        // Cenário A: Resposta do Flow (JSON)
+        if (input != null && input.trim().startsWith("{")) {
+            try {
+                Map<String, Object> data = objectMapper.readValue(input, new TypeReference<Map<String, Object>>() {});
+                
+                newAddress = new Address();
+                newAddress.setPostalCode(getString(data, "cep"));
+                newAddress.setStreet(getString(data, "rua"));
+                newAddress.setNumber(getString(data, "numero"));
+                newAddress.setComplement(getString(data, "complemento"));
+                newAddress.setNeighborhood(getString(data, "bairro"));
+                newAddress.setCity(getString(data, "cidade"));
+                newAddress.setState(getString(data, "estado"));
+                
+            } catch (Exception e) {
+                log.warn("Falha ao parsear JSON de endereço. Tentando tratar como texto livre. Input: {}", input);
+            }
+        }
+
+        // Cenário B: Usuário digitou texto livre (Fallback ou Erro no Flow)
+        if (newAddress == null && input != null && !input.isBlank() && !input.trim().startsWith("{")) {
+            // Aqui você poderia implementar uma lógica simples de regex ou apenas salvar como 'Street'
+            // Por simplicidade, salvamos tudo na rua para ajuste manual posterior se necessário
+            newAddress = new Address();
+            newAddress.setStreet(input); 
+        }
+
+        if (newAddress != null) {
             session.setTempAddress(newAddress);
             sessionService.saveSession(session);
 
-            sendText(contact, "📍 Endereço recebido com sucesso!", channel, systemUser);
-
-            // Continua para o resumo
+            sendText(contact, "📍 Endereço recebido!", channel, systemUser);
             showOrderSummary(contact, session, systemUser, channel);
-
-        } catch (Exception e) {
-            log.error("Erro ao processar endereço do flow", e);
-            sendText(contact, "Houve um erro ao ler o endereço. Poderia digitar manualmente?", channel, systemUser);
-            // Fallback ou reset
+        } else {
+            // Se chegou aqui, não entendemos nada (nem JSON nem texto válido)
+            sendText(contact, "Não consegui entender o endereço. Por favor, preencha o formulário ou digite o endereço completo:", channel, systemUser);
+            // Mantém no estado FILLING_ADDRESS
         }
     }
 
@@ -276,5 +289,11 @@ public class CommerceFlowHandler {
             req.setFromPhoneNumberId(channel.getPhoneNumberId());
         }
         whatsAppService.sendTextMessage(req, user).subscribe();
+    }
+
+    private String getString(Map<String, Object> map, String key) {
+        
+        Object val = map.get(key);
+        return val != null ? String.valueOf(val) : "";
     }
 }

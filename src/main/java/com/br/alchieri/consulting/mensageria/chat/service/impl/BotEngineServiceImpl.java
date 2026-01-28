@@ -78,24 +78,31 @@ public class BotEngineServiceImpl implements BotEngineService {
         
         String state = session.getCurrentState();
 
+        // 1. Prioridade: Preenchimento de Endereço (Checkout)
+        if (ConversationState.FILLING_ADDRESS.name().equals(state)) {
+            // Se o input for nulo ou vazio (erro de extração), avisa o handler
+            if (input == null || input.isBlank()) {
+                commerceHandler.processAddressData(null, contact, session, systemUser, channel);
+            } else {
+                // Passa o JSON (ou texto se o usuario digitou manual)
+                commerceHandler.processAddressData(input, contact, session, systemUser, channel);
+            }
+            return;
+        }
+
+        // 2. Prioridade: Estados de Checkout
         if (isCommerceState(state)) {
             dispatchToCommerceHandler(state, input, contact, session, systemUser, channel);
             return;
         }
 
-        if (ConversationState.FILLING_ADDRESS.name().equals(state)) {
-            // Assume-se que 'input' aqui contém o JSON da resposta do Flow
-            // Se o seu Webhook passar apenas texto simples, você precisará ajustar o Controller 
-            // para passar o response_json do nfm_reply
-            commerceHandler.processAddressData(input, contact, session, systemUser, channel);
-            return;
-        }
-
+        // 3. Trigger Explícito
         if ("CHECKOUT_TRIGGER".equals(input)) {
             commerceHandler.startCheckoutFlow(contact, session, systemUser, channel);
             return;
         }
 
+        // 4. Fluxo Padrão (Árvore de Decisão)
         processStandardBotFlow(input, contact, session, systemUser, channel);
     }
 

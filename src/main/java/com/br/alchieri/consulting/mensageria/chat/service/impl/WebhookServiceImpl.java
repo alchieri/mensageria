@@ -553,49 +553,52 @@ public class WebhookServiceImpl implements WebhookService {
         contactRepository.save(contact);
 
         // ---------------------------------------------------------
-        // 3. Processamento Específico de Flows (Mantendo original)
+        // 3. Processamento Específico de Flows (Dual Strategy)
         // ---------------------------------------------------------
+        String flowJsonInput = null;
+        boolean isFlowResponse = false;
+
         if ("interactive".equals(type) && messageNode.has("interactive")) {
             JsonNode interactiveNode = messageNode.path("interactive");
             if ("nfm_reply".equals(interactiveNode.path("type").asText())) {
+                isFlowResponse = true;
+                JsonNode nfmReplyNode = interactiveNode.path("nfm_reply");
+                flowJsonInput = nfmReplyNode.path("response_json").asText(null);
+                
+                // A. Sempre tenta salvar o dado bruto para auditoria/histórico (FlowData)
                 try {
                     processAndSaveFlowData(interactiveNode, companyAssociatedWithWebhook, contact, from);
                 } catch (Exception e) {
-                    log.error("ERRO AO SALVAR FLOW DATA para WAMID {}: {}", wamid, e.getMessage(), e);
+                    log.error("ERRO AO SALVAR FLOW DATA para WAMID {}: {}", wamid, e.getMessage());
                 }
             }
         }
 
         // ---------------------------------------------------------
-        // 4. Integração do BOT (ESTADO E SESSÃO) - NOVO
+        // 4. Integração do BOT
         // ---------------------------------------------------------
         if (companyAssociatedWithWebhook != null) {
             try {
-                
                 UserSession session = sessionService.getSession(companyAssociatedWithWebhook, contact.getPhoneNumber());
                 User systemUser = getSystemUserForCompany(companyAssociatedWithWebhook);
                 
-                String botInput = extractContentForBot(messageNode, type);
+                // Se for resposta de Flow, o input é o JSON. Se não, extrai texto normal.
+                String botInput = isFlowResponse ? flowJsonInput : extractContentForBot(messageNode, type);
 
-                // CENÁRIO A: É um Pedido Nativo (Carrinho do WhatsApp)?
+                // CENÁRIO A: É um Pedido Nativo
                 if ("order".equals(type)) {
                     handleNativeOrderMessage(messageNode, companyAssociatedWithWebhook, contact, session);
-                    // Dispara o trigger de checkout no bot
                     botEngineService.processInput("CHECKOUT_TRIGGER", contact, session, systemUser, channel);
                     return;
                 }
 
-                // CENÁRIO B: Fluxo Normal de Bot
-                botInput = extractContentForBot(messageNode, type);
-                
-                if (session.isBotActive()) {
-                    // Usuário já está em atendimento automático
+                // CENÁRIO B: Fluxo Normal de Bot (Incluindo retorno de Flow de Endereço)
+                if (session.isBotActive() || isFlowResponse) { // Se recebeu Flow, força processamento mesmo se bot inativo (pode ser flow solto)
                     botEngineService.processInput(botInput, contact, session, systemUser, channel);
                 } else {
-                    // Tenta iniciar bot ou fallback
                     boolean started = botEngineService.tryTriggerBot(companyAssociatedWithWebhook, contact, session, systemUser, channel);
                     if (!started) {
-                        log.info("Nenhum bot iniciado. Mensagem entregue à caixa de entrada humana.");
+                        log.info("Nenhum bot iniciado.");
                     }
                 }
             } catch (Exception e) {
