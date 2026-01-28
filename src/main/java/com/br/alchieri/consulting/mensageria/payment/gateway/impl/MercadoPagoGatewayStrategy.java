@@ -1,6 +1,8 @@
 package com.br.alchieri.consulting.mensageria.payment.gateway.impl;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.springframework.http.HttpHeaders;
@@ -13,6 +15,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 import com.br.alchieri.consulting.mensageria.exception.BusinessException;
 import com.br.alchieri.consulting.mensageria.model.cart.Order;
+import com.br.alchieri.consulting.mensageria.model.cart.OrderItem;
 import com.br.alchieri.consulting.mensageria.model.enums.PaymentProvider;
 import com.br.alchieri.consulting.mensageria.model.enums.PaymentStatus;
 import com.br.alchieri.consulting.mensageria.payment.dto.PaymentResponseDTO;
@@ -98,13 +101,113 @@ public class MercadoPagoGatewayStrategy implements PaymentGateway {
 
     @Override
     public PaymentResponseDTO createPaymentLink(Order order, PaymentConfig config) {
-        throw new BusinessException("Link de Checkout Mercado Pago não implementado neste exemplo.");
+        try {
+            // 1. Construção da Preferência
+            Map<String, Object> preference = new HashMap<>();
+            
+            // Itens do Pedido
+            List<Map<String, Object>> items = new ArrayList<>();
+            for (OrderItem orderItem : order.getItems()) {
+                Map<String, Object> item = new HashMap<>();
+                item.put("id", orderItem.getProductSku());
+                item.put("title", orderItem.getProductName());
+                item.put("quantity", orderItem.getQuantity());
+                item.put("currency_id", "BRL");
+                item.put("unit_price", orderItem.getUnitPrice());
+                items.add(item);
+            }
+            preference.put("items", items);
+
+            // Payer (Comprador)
+            Map<String, Object> payer = new HashMap<>();
+            payer.put("email", "cliente_" + order.getContact().getPhoneNumber() + "@email.com");
+            payer.put("name", order.getContact().getName());
+            preference.put("payer", payer);
+
+            // Back URLs (Para onde o utilizador volta após pagar)
+            String botPhoneNumber = order.getChannel().getDisplayPhoneNumber().replaceAll("[^0-9]", "");
+            String waBaseUrl = "https://wa.me/" + botPhoneNumber;
+
+            Map<String, Object> backUrls = new HashMap<>();
+
+            // Sucesso: Redireciona para o WhatsApp com texto "Já paguei"
+            backUrls.put("success", waBaseUrl + "?text=Realizei%20o%20pagamento!%20Pode%20confirmar%20o%20pedido%20" + order.getId() + "?");
+            // Falha: Redireciona para o WhatsApp relatando problema
+            backUrls.put("failure", waBaseUrl + "?text=Tive%20problemas%20com%20o%20pagamento%20do%20pedido%20" + order.getId());
+            // Pendente: Redireciona avisando que está em análise
+            backUrls.put("pending", waBaseUrl + "?text=O%20pagamento%20do%20pedido%20" + order.getId() + "%20está%20pendente.");
+            
+            preference.put("back_urls", backUrls);
+            // 'approved': Tenta redirecionar automaticamente para o app do WhatsApp assim que o pagamento é aprovado.
+            preference.put("auto_return", "approved");
+
+            // External Reference (Crucial para Webhook: ID do Pedido Local)
+            preference.put("external_reference", order.getId().toString());
+            
+            // Metadata adicional
+            Map<String, Object> metadata = new HashMap<>();
+            metadata.put("company_id", order.getCompany().getId());
+            metadata.put("channel_id", order.getChannel().getId());
+            preference.put("metadata", metadata);
+
+            // 2. Chamada à API /checkout/preferences
+            JsonNode response = webClient.post()
+                    .uri("/checkout/preferences")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + config.getAccessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(BodyInserters.fromValue(preference))
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .block();
+
+            if (response == null || !response.has("id")) {
+                throw new BusinessException("Erro ao criar Preferência Checkout Pro.");
+            }
+
+            // 3. Extração do Link (init_point)
+            String preferenceId = response.get("id").asText();
+            // init_point = Produção, sandbox_init_point = Testes
+            // O Mercado Pago decide qual entregar baseada no Token (Prod vs Test), mas podemos forçar a lógica se necessário.
+            String paymentUrl = response.get("init_point").asText(); 
+            
+            if (response.has("sandbox_init_point") && config.getAccessToken().startsWith("TEST-")) {
+                paymentUrl = response.get("sandbox_init_point").asText();
+            }
+
+            return PaymentResponseDTO.builder()
+                    .externalId(preferenceId) // Aqui guardamos o ID da Preferência
+                    .paymentUrl(paymentUrl)   // O link para enviar ao utilizador no WhatsApp
+                    .status("CREATED")
+                    .build();
+
+        } catch (WebClientResponseException e) {
+            log.error("Erro HTTP MP Checkout Pro: {} - {}", e.getStatusCode(), e.getResponseBodyAsString());
+            throw new BusinessException("Erro ao gerar link de pagamento: " + e.getStatusCode());
+        } catch (Exception e) {
+            log.error("Erro genérico MP Checkout Pro", e);
+            throw new BusinessException("Falha interna ao processar pagamento.");
+        }
     }
 
     @Override
     public PaymentStatus checkPaymentStatus(String externalId, PaymentConfig config) {
+        
         try {
-            // GET https://api.mercadopago.com/v1/payments/{id}
+            // Nota: Para Checkout Pro, o 'externalId' salvo inicialmente é o ID da PREFERÊNCIA.
+            // Porém, a verificação de status geralmente é feita pelo ID do PAGAMENTO (Payment ID) que vem via Webhook.
+            // Se tentarmos consultar GET /v1/payments/{preferenceId}, vai falhar.
+            
+            // Se o externalId parecer um UUID (formato comum de preferência), não podemos consultar status de pagamento diretamente.
+            // A consulta direta só funciona se tivermos o Payment ID (numérico longo).
+            if (externalId.contains("-") && externalId.length() > 20) {
+                 // É provável que seja um Preference ID.
+                 // Não conseguimos saber se foi pago apenas consultando a preferência.
+                 // Dependemos do Webhook para atualizar o ID do pedido com o Payment ID real.
+                 log.debug("Consultando status por Preference ID não suportado diretamente. Aguardando Webhook.");
+                 return PaymentStatus.PENDING;
+            }
+
+            // Se for numérico, assume-se que é um Payment ID (provavelmente vindo do Pix ou atualizado via Webhook)
             JsonNode response = webClient.get()
                     .uri("/v1/payments/" + externalId)
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + config.getAccessToken())
