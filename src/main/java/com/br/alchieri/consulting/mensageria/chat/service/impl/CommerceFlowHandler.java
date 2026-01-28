@@ -168,8 +168,11 @@ public class CommerceFlowHandler {
         } else if (lowerInput.contains("sair") || lowerInput.contains("encerrar")) {
             sendText(contact, "Atendimento encerrado. Obrigado!", channel, systemUser);
             sessionService.resetSession(session);
-        } else if (lowerInput.contains("ja paguei") || lowerInput.contains("paguei")) {
-            sendText(contact, "Obrigado! Você receberá a notificação aqui assim que o banco confirmar.", channel, systemUser);
+        } else if (lowerInput.contains("ja paguei") || 
+                lowerInput.contains("paguei") || 
+                lowerInput.contains("realizei o pagamento") || 
+                lowerInput.contains("confirmar")) {
+            sendText(contact, "Obrigado! 🚀\n\nAssim que o banco confirmar a transação, você receberá a notificação oficial aqui automaticamente.", channel, systemUser);
         } else {
             sendText(contact, "Ainda aguardando. Digite *Pix* para ver o código ou *Sair* para finalizar.", channel, systemUser);
         }
