@@ -34,7 +34,6 @@ import lombok.NoArgsConstructor;
         @Index(name = "idx_wml_company_timestamp", columnList = "company_id, createdAt"), // Index para buscar msg de cliente por tempo
         @Index(name = "idx_wml_scheduled_message_id", columnList = "scheduledMessageId")
 })
-@FilterDef(name = "tenantFilter", parameters = @ParamDef(name = "companyId", type = Long.class))
 @Filter(name = "tenantFilter", condition = "company_id = :companyId")
 @Data
 @NoArgsConstructor

@@ -3,6 +3,8 @@ package com.br.alchieri.consulting.mensageria.model;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.hibernate.annotations.Filter;
+
 import com.br.alchieri.consulting.mensageria.catalog.model.Catalog;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
@@ -23,6 +25,7 @@ import lombok.ToString;
 
 @Entity
 @Table(name = "meta_business_managers")
+@Filter(name = "tenantFilter", condition = "company_id = :companyId")
 @Data
 @NoArgsConstructor
 public class MetaBusinessManager {

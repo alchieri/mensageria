@@ -30,7 +30,6 @@ import lombok.NoArgsConstructor;
         @Index(name = "idx_media_company", columnList = "company_id"),
         @Index(name = "idx_media_meta_id", columnList = "metaMediaId", unique = true) // O ID da Meta é único
 })
-@FilterDef(name = "tenantFilter", parameters = @ParamDef(name = "companyId", type = Long.class))
 @Filter(name = "tenantFilter", condition = "company_id = :companyId")
 @Data
 @NoArgsConstructor

@@ -1,5 +1,7 @@
 package com.br.alchieri.consulting.mensageria.payment.model;
 
+import org.hibernate.annotations.Filter;
+
 import com.br.alchieri.consulting.mensageria.model.Company;
 import com.br.alchieri.consulting.mensageria.model.enums.PaymentProvider;
 
@@ -17,6 +19,7 @@ import lombok.Data;
 
 @Entity
 @Table(name = "payment_configs")
+@Filter(name = "tenantFilter", condition = "company_id = :companyId")
 @Data
 public class PaymentConfig {
 

@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.Filter;
 
 import com.br.alchieri.consulting.mensageria.model.enums.InvoiceStatus;
 
@@ -30,6 +31,7 @@ import lombok.NoArgsConstructor;
 
 @Entity
 @Table(name = "invoices")
+@Filter(name = "tenantFilter", condition = "company_id = :companyId")
 @Data
 @NoArgsConstructor
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)

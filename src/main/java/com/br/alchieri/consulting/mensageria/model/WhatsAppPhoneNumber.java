@@ -28,7 +28,6 @@ import lombok.ToString;
 
 @Entity
 @Table(name = "whatsapp_phone_numbers")
-@FilterDef(name = "tenantFilter", parameters = @ParamDef(name = "companyId", type = Long.class))
 @Filter(name = "tenantFilter", condition = "company_id = :companyId")
 @Data
 @Builder

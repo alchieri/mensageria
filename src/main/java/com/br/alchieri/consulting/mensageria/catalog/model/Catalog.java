@@ -28,7 +28,6 @@ import lombok.NoArgsConstructor;
 
 @Entity
 @Table(name = "catalogs")
-@FilterDef(name = "tenantFilter", parameters = @ParamDef(name = "companyId", type = Long.class))
 @Filter(name = "tenantFilter", condition = "company_id = :companyId")
 @Data
 @NoArgsConstructor

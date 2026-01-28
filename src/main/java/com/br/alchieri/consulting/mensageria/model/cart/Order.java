@@ -35,7 +35,6 @@ import lombok.Data;
 
 @Entity
 @Table(name = "orders")
-@FilterDef(name = "tenantFilter", parameters = @ParamDef(name = "companyId", type = Long.class))
 @Filter(name = "tenantFilter", condition = "company_id = :companyId")
 @Data
 public class Order {

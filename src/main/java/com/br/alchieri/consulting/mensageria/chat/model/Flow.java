@@ -39,7 +39,6 @@ import lombok.NoArgsConstructor;
         @Index(name = "idx_flow_company", columnList = "company_id"),
         @Index(name = "idx_flow_meta_id", columnList = "metaFlowId", unique = true)
 })
-@FilterDef(name = "tenantFilter", parameters = @ParamDef(name = "companyId", type = Long.class))
 @Filter(name = "tenantFilter", condition = "company_id = :companyId")
 @Data
 @NoArgsConstructor
