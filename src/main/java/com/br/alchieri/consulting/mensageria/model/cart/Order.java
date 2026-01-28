@@ -20,6 +20,7 @@ import com.br.alchieri.consulting.mensageria.model.enums.PaymentStatus;
 
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -51,7 +52,7 @@ public class Order {
     @JoinColumn(name = "contact_id", nullable = false)
     private Contact contact;
 
-    @OneToOne(cascade = CascadeType.ALL) 
+    @Embedded
     private Address deliveryAddress;
 
     @ManyToOne

@@ -37,7 +37,7 @@ public interface WhatsAppMessageLogRepository extends JpaRepository<WhatsAppMess
      * @return Uma página de logs de mensagem.
      */
     @Query("SELECT log FROM WhatsAppMessageLog log " +
-           "WHERE log.company = :company AND (log.sender = :phoneNumber OR log.recipient = :phoneNumber)")
+           "WHERE log.company = :company AND (log.senderPhoneNumber = :phoneNumber OR log.recipient = :phoneNumber)")
     Page<WhatsAppMessageLog> findByCompanyAndPhoneNumber(
             @Param("company") Company company,
             @Param("phoneNumber") String phoneNumber,
@@ -56,11 +56,11 @@ public interface WhatsAppMessageLogRepository extends JpaRepository<WhatsAppMess
            "WHERE log.company = :company " +
            "AND log.createdAt = (SELECT MAX(subLog.createdAt) FROM WhatsAppMessageLog subLog " +
            "                     WHERE subLog.company = :company " +
-           "                     AND ((subLog.sender = log.sender AND subLog.recipient = log.recipient) OR (subLog.sender = log.recipient AND subLog.recipient = log.sender))) " +
+           "                     AND ((subLog.senderPhoneNumber = log.senderPhoneNumber AND subLog.recipient = log.recipient) OR (subLog.senderPhoneNumber = log.recipient AND subLog.recipient = log.senderPhoneNumber))) " +
            "AND EXISTS (SELECT 1 FROM WhatsAppMessageLog incomingCheck " +
            "            WHERE incomingCheck.company = :company " +
            "            AND incomingCheck.direction = 'INCOMING' " +
-           "            AND (incomingCheck.sender = log.sender OR incomingCheck.sender = log.recipient) " +
+           "            AND (incomingCheck.senderPhoneNumber = log.senderPhoneNumber OR incomingCheck.senderPhoneNumber = log.recipient) " +
            "            AND incomingCheck.createdAt >= :sinceTimestamp)")
     List<Long> findActiveChatLastMessageIds(
             @Param("company") Company company,
@@ -78,14 +78,14 @@ public interface WhatsAppMessageLogRepository extends JpaRepository<WhatsAppMess
                    "INNER JOIN ( " +
                    "    SELECT " +
                    "        CASE " +
-                   "            WHEN direction = 'INCOMING' THEN sender " +
+                   "            WHEN direction = 'INCOMING' THEN senderPhoneNumber " +
                    "            ELSE recipient " +
                    "        END as contact_phone, " +
                    "        MAX(created_at) as max_created_at " +
                    "    FROM whatsapp_message_logs " +
                    "    WHERE company_id = :companyId " +
                    "    GROUP BY contact_phone " +
-                   ") latest ON ((wml.sender = latest.contact_phone OR wml.recipient = latest.contact_phone) AND wml.created_at = latest.max_created_at) " +
+                   ") latest ON ((wml.senderPhoneNumber = latest.contact_phone OR wml.recipient = latest.contact_phone) AND wml.created_at = latest.max_created_at) " +
                    "WHERE wml.company_id = :companyId " +
                    "ORDER BY wml.created_at DESC",
                    nativeQuery = true)
